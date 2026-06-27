@@ -1,0 +1,17 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+fastapi = "==0.115.0"
+uvicorn = "==0.30.6"
+sqlalchemy = "==2.0.35"
+beautifulsoup4 = "==4.12.3"
+requests = "==2.32.3"
+apscheduler = "==3.10.4"
+python-multipart = "==0.0.9"
+psycopg2-binary = "==2.9.9"
+
+[requires]
+python_version = "3.11"
