@@ -1,0 +1,20 @@
+{
+  "sites": [
+    {
+      "name": "Jumia Kenya",
+      "url": "https://www.jumia.co.ke/",
+      "product_selector": "article.prd",
+      "title_selector": "div.name",
+      "price_selector": "div.prc",
+      "link_selector": "a.core"
+    },
+    {
+      "name": "Yves Rocher Kenya",
+      "url": "https://yves-rocher.co.ke/collections/all",
+      "product_selector": "product-grid-item",
+      "title_selector": ".product__grid__title",
+      "price_selector": ".price",
+      "link_selector": ".product__grid__info a"
+    }
+  ]
+}
