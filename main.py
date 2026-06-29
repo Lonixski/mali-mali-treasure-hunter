@@ -4,6 +4,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 from database import Site, Deal, PriceSnapshot, get_db, engine, Base, SessionLocal
 from scheduler import start_scheduler, scrape_in_background
+import os
 import threading
 
 Base.metadata.create_all(bind=engine)
@@ -154,7 +155,7 @@ def admin_dashboard(db: Session = Depends(get_db)):
                 <div class="header-content">
                     <div class="logo">💎</div>
                     <div>
-                        <h1>🇰🇪 Mali Mali Treasure Hunter</h1>
+                        <h1>🇪 Mali Mali Treasure Hunter</h1>
                         <div class="subtitle">Smart Deal Management Dashboard</div>
                     </div>
                 </div>
@@ -202,7 +203,7 @@ def admin_dashboard(db: Session = Depends(get_db)):
             </div>
 
             <div class="card">
-                <h2>🛍️ Recent Deals</h2>
+                <h2>️ Recent Deals</h2>
                 <table>
                     <thead><tr><th>Store</th><th>Product</th><th>Price</th><th>Link</th><th>Discovered</th></tr></thead>
                     <tbody>""" + deals_html + """</tbody>
@@ -243,9 +244,22 @@ def delete_site(site_id: int, db: Session = Depends(get_db)):
 
 @app.post("/admin/refresh")
 def manual_refresh():
-    """Start scraping in background and return immediately"""
     scrape_in_background()
     return RedirectResponse(url="/admin", status_code=303)
+
+
+@app.get("/debug/telegram")
+def debug_telegram():
+    token = os.environ.get("8336727259:AAFr9XngoYmy9RXXgXdsj101V2ubbj0j-0k", "")
+    chat_id = os.environ.get("125601423", "")
+
+    return {
+        "token_set": bool(token),
+        "token_length": len(token) if token else 0,
+        "token_preview": token[:10] + "..." if token and len(token) > 10 else token,
+        "chat_id_set": bool(chat_id),
+        "chat_id_value": chat_id
+    }
 
 
 @app.get("/")
