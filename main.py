@@ -3,7 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 from database import Site, Deal, PriceSnapshot, get_db, engine, Base, SessionLocal
-from scheduler import start_scheduler, scrape_and_notify
+from scheduler import start_scheduler, scrape_in_background
+import threading
 
 Base.metadata.create_all(bind=engine)
 
@@ -242,7 +243,8 @@ def delete_site(site_id: int, db: Session = Depends(get_db)):
 
 @app.post("/admin/refresh")
 def manual_refresh():
-    scrape_and_notify()
+    """Start scraping in background and return immediately"""
+    scrape_in_background()
     return RedirectResponse(url="/admin", status_code=303)
 
 
