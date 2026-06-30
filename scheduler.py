@@ -5,9 +5,9 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 import os
 import threading
+import time
 from database import SessionLocal, Site, Deal, PriceSnapshot
 
-# Hardcoded credentials to bypass environment variable issues
 TELEGRAM_BOT_TOKEN = "8336727259:AAFr9XngoYmy9RXXgXdsj101V2ubbj0j-0k"
 TELEGRAM_CHAT_ID = "125601423"
 
@@ -44,8 +44,14 @@ def extract_price_value(price_str: str) -> float:
 def scrape_single_site(site):
     print(f"  🔍 Visiting: {site.name}...")
 
+    # More realistic browser headers to avoid blocking
     headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1"
     }
 
     new_deals_count = 0
@@ -53,15 +59,39 @@ def scrape_single_site(site):
 
     db = SessionLocal()
 
+    # Try up to 3 times with increasing delays
+    for attempt in range(3):
+        try:
+            response = requests.get(site.url, headers=headers, timeout=15)
+
+            if response.status_code == 200:
+                break
+            elif response.status_code in [403, 429, 503]:
+                print(f"    ⚠️ Attempt {attempt + 1}: Got {response.status_code}, waiting...")
+                time.sleep(2 ** attempt)  # Wait 1s, 2s, 4s
+                continue
+            else:
+                print(f"    ❌ Failed to connect to {site.name} (Status: {response.status_code})")
+                return 0, 0
+        except requests.exceptions.Timeout:
+            print(f"    ⏱️ Attempt {attempt + 1}: Timeout, retrying...")
+            time.sleep(2 ** attempt)
+            continue
+        except Exception as e:
+            print(f"    ⚠️ Attempt {attempt + 1}: Error - {e}")
+            time.sleep(2 ** attempt)
+            continue
+    else:
+        print(f"    ❌ Failed after 3 attempts: {site.name}")
+        return 0, 0
+
     try:
-        response = requests.get(site.url, headers=headers, timeout=10)
-
-        if response.status_code != 200:
-            print(f"    ❌ Failed to connect to {site.name} (Status: {response.status_code})")
-            return 0, 0
-
         soup = BeautifulSoup(response.text, 'html.parser')
         products = soup.select(site.product_selector)
+
+        if not products:
+            print(f"    ⚠️ No products found with selector: {site.product_selector}")
+            return 0, 0
 
         for product in products[:10]:
             try:
@@ -143,10 +173,8 @@ def scrape_single_site(site):
 
         db.commit()
 
-    except requests.exceptions.Timeout:
-        print(f"    ⏱️ Timeout connecting to {site.name}")
     except Exception as e:
-        print(f"    ⚠️ Error scraping {site.name}: {e}")
+        print(f"    ⚠️ Error parsing {site.name}: {e}")
     finally:
         db.close()
 
