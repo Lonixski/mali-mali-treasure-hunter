@@ -155,7 +155,7 @@ def admin_dashboard(db: Session = Depends(get_db)):
                 <div class="header-content">
                     <div class="logo">💎</div>
                     <div>
-                        <h1>🇪 Mali Mali Treasure Hunter</h1>
+                        <h1>🇰🇪 Mali Mali Treasure Hunter</h1>
                         <div class="subtitle">Smart Deal Management Dashboard</div>
                     </div>
                 </div>
@@ -203,7 +203,7 @@ def admin_dashboard(db: Session = Depends(get_db)):
             </div>
 
             <div class="card">
-                <h2>️ Recent Deals</h2>
+                <h2>🛍️ Recent Deals</h2>
                 <table>
                     <thead><tr><th>Store</th><th>Product</th><th>Price</th><th>Link</th><th>Discovered</th></tr></thead>
                     <tbody>""" + deals_html + """</tbody>
@@ -250,8 +250,8 @@ def manual_refresh():
 
 @app.get("/debug/telegram")
 def debug_telegram():
-    token = os.environ.get("8336727259:AAFr9XngoYmy9RXXgXdsj101V2ubbj0j-0k", "")
-    chat_id = os.environ.get("125601423", "")
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
 
     return {
         "token_set": bool(token),
@@ -262,6 +262,6 @@ def debug_telegram():
     }
 
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 def home():
     return {"message": "Welcome to Mali Mali Treasure Hunter! Visit /deals for data, /admin for dashboard."}
