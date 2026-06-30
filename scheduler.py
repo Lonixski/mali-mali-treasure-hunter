@@ -7,13 +7,14 @@ import os
 import threading
 from database import SessionLocal, Site, Deal, PriceSnapshot
 
-TELEGRAM_BOT_TOKEN = os.environ.get("8336727259:AAFr9XngoYmy9RXXgXdsj101V2ubbj0j-0k", "")
-TELEGRAM_CHAT_ID = os.environ.get("125601423", "")
+# Hardcoded credentials to bypass environment variable issues
+TELEGRAM_BOT_TOKEN = "8336727259:AAFr9XngoYmy9RXXgXdsj101V2ubbj0j-0k"
+TELEGRAM_CHAT_ID = "125601423"
 
 
 def send_telegram_message(message):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print("️ Telegram not configured. Check Render Environment Variables.")
+        print("⚠️ Telegram not configured.")
         return
 
     try:
@@ -25,7 +26,7 @@ def send_telegram_message(message):
         }
         response = requests.post(url, data=data, timeout=10)
         if response.status_code == 200:
-            print(" Telegram notification sent!")
+            print("📱 Telegram notification sent!")
         else:
             print(f"❌ Telegram error: {response.text}")
     except Exception as e:
@@ -131,7 +132,7 @@ def scrape_single_site(site):
 ✅ Now: {price}
 🔗 <a href="{raw_link}">View Deal</a>
 
- {datetime.now().strftime('%H:%M')}"""
+⏰ {datetime.now().strftime('%H:%M')}"""
                             send_telegram_message(message)
                         else:
                             print(f"    📈 Price increased: {old_price} → {price}")
