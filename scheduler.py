@@ -9,7 +9,7 @@ import time
 from database import SessionLocal, Site, Deal, PriceSnapshot
 
 TELEGRAM_BOT_TOKEN = "8336727259:AAFr9XngoYmy9RXXgXdsj101V2ubbj0j-0k"
-TELEGRAM_CHAT_ID = "125601423"
+TELEGRAM_CHAT_ID = "-1004366904049"
 
 
 def send_telegram_message(message):
