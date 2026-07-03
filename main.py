@@ -6,7 +6,7 @@ import uvicorn
 import logging
 
 from database import get_db, Deal, Site, engine, Base
-from scheduler import init_scheduler, scrape_specific_site
+from scheduler import init_scheduler, scrape_single_site
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -29,19 +29,47 @@ def startup_db():
 # --- ROUTES FOR ACTIONS ---
 
 @app.post("/add_site")
-def add_site(name: str = Form(...), url: str = Form(...), db: Session = Depends(get_db)):
-    new_site = Site(name=name, url=url)
+def add_site(
+        name: str = Form(...),
+        url: str = Form(...),
+        product_selector: str = Form(...),
+        title_selector: str = Form(...),
+        price_selector: str = Form(...),
+        link_selector: str = Form(""),
+        db: Session = Depends(get_db)
+):
+    new_site = Site(
+        name=name,
+        url=url,
+        product_selector=product_selector,
+        title_selector=title_selector,
+        price_selector=price_selector,
+        link_selector=link_selector if link_selector else None
+    )
     db.add(new_site)
     db.commit()
     return RedirectResponse(url="/", status_code=303)
 
 
 @app.post("/edit_site/{site_id}")
-def edit_site(site_id: int, name: str = Form(...), url: str = Form(...), db: Session = Depends(get_db)):
+def edit_site(
+        site_id: int,
+        name: str = Form(...),
+        url: str = Form(...),
+        product_selector: str = Form(...),
+        title_selector: str = Form(...),
+        price_selector: str = Form(...),
+        link_selector: str = Form(""),
+        db: Session = Depends(get_db)
+):
     site = db.query(Site).filter(Site.id == site_id).first()
     if site:
         site.name = name
         site.url = url
+        site.product_selector = product_selector
+        site.title_selector = title_selector
+        site.price_selector = price_selector
+        site.link_selector = link_selector if link_selector else None
         db.commit()
     return RedirectResponse(url="/", status_code=303)
 
@@ -49,7 +77,7 @@ def edit_site(site_id: int, name: str = Form(...), url: str = Form(...), db: Ses
 @app.post("/refresh_site/{site_id}")
 def refresh_site(site_id: int, db: Session = Depends(get_db)):
     """Triggers the scraper for this specific site immediately."""
-    scrape_specific_site(site_id, db)
+    scrape_single_site(site_id, db)
     return RedirectResponse(url="/", status_code=303)
 
 
@@ -69,7 +97,6 @@ def admin_dashboard(request: Request, db: Session = Depends(get_db)):
     sites = db.query(Site).all()
     deals = db.query(Deal).order_by(Deal.created_at.desc()).all()
 
-    # STRICT BLACK AND GOLD DESIGN
     html = """
     <!DOCTYPE html>
     <html>
@@ -78,36 +105,55 @@ def admin_dashboard(request: Request, db: Session = Depends(get_db)):
         <style>
             body { font-family: 'Segoe UI', Arial, sans-serif; background-color: #0a0a0a; color: #FFD700; padding: 20px; margin: 0; }
             h1, h2 { text-align: center; color: #FFD700; text-shadow: 1px 1px 2px #000; letter-spacing: 2px; }
-            .container { max-width: 1000px; margin: 0 auto; }
+            .container { max-width: 1200px; margin: 0 auto; }
             .card { background-color: #141414; border: 1px solid #FFD700; padding: 20px; margin-bottom: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(255, 215, 0, 0.1); }
             table { width: 100%; border-collapse: collapse; margin-top: 10px; }
             th, td { border: 1px solid #333; padding: 10px; text-align: left; color: #FFF; }
-            th { background-color: #000; color: #FFD700; text-transform: uppercase; }
-            input[type="text"], input[type="url"] { background-color: #000; border: 1px solid #FFD700; color: #FFD700; padding: 8px; width: 95%; margin-bottom: 10px; }
+            th { background-color: #000; color: #FFD700; text-transform: uppercase; font-size: 0.85em; }
+            input[type="text"], input[type="url"] { background-color: #000; border: 1px solid #FFD700; color: #FFD700; padding: 8px; width: 95%; margin-bottom: 10px; font-size: 0.9em; }
             button, .btn { background-color: #FFD700; color: #000; border: none; padding: 8px 15px; cursor: pointer; font-weight: bold; text-decoration: none; display: inline-block; margin-right: 5px; }
             button:hover, .btn:hover { background-color: #FFF; }
             .btn-danger { background-color: #8B0000; color: #FFF; }
             .btn-danger:hover { background-color: #FF4500; }
-            .form-row { display: flex; gap: 10px; align-items: flex-end; }
+            .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+            .full-width { grid-column: 1 / -1; }
         </style>
     </head>
     <body>
         <div class="container">
-            <h1> MALI MALI COMMAND CENTER</h1>
+            <h1>🏆 MALI MALI COMMAND CENTER</h1>
 
             <!-- ADD WEBSITE SECTION -->
             <div class="card">
-                <h2> Add New Website</h2>
-                <form action="/add_site" method="POST" class="form-row">
-                    <div style="flex: 1;">
-                        <label style="color:#FFF;">Site Name:</label>
-                        <input type="text" name="name" required placeholder="e.g., Jumia">
+                <h2>➕ Add New Website</h2>
+                <form action="/add_site" method="POST">
+                    <div class="form-grid">
+                        <div>
+                            <label style="color:#FFF;">Site Name:</label>
+                            <input type="text" name="name" required placeholder="e.g., Jumia">
+                        </div>
+                        <div>
+                            <label style="color:#FFF;">Website URL:</label>
+                            <input type="url" name="url" required placeholder="https://...">
+                        </div>
+                        <div class="full-width">
+                            <label style="color:#FFF;">Product Container Selector (CSS):</label>
+                            <input type="text" name="product_selector" required placeholder="e.g., .product-card">
+                        </div>
+                        <div>
+                            <label style="color:#FFF;">Title Selector:</label>
+                            <input type="text" name="title_selector" required placeholder="e.g., h2.title">
+                        </div>
+                        <div>
+                            <label style="color:#FFF;">Price Selector:</label>
+                            <input type="text" name="price_selector" required placeholder="e.g., span.price">
+                        </div>
+                        <div class="full-width">
+                            <label style="color:#FFF;">Link Selector (optional):</label>
+                            <input type="text" name="link_selector" placeholder="e.g., a.product-link">
+                        </div>
                     </div>
-                    <div style="flex: 2;">
-                        <label style="color:#FFF;">Website URL:</label>
-                        <input type="url" name="url" required placeholder="https://...">
-                    </div>
-                    <button type="submit">Add Site</button>
+                    <button type="submit" style="margin-top: 10px;">Add Site</button>
                 </form>
             </div>
 
@@ -118,24 +164,38 @@ def admin_dashboard(request: Request, db: Session = Depends(get_db)):
                     <tr>
                         <th>Name</th>
                         <th>URL</th>
+                        <th>Selectors</th>
                         <th>Actions</th>
                     </tr>
     """
 
     for site in sites:
+        selectors_info = f"""
+            <small style="color:#AAA;">
+                Product: {site.product_selector or 'N/A'}<br>
+                Title: {site.title_selector or 'N/A'}<br>
+                Price: {site.price_selector or 'N/A'}
+            </small>
+        """
+
         html += f"""
                     <tr>
                         <td>{site.name}</td>
-                        <td><a href="{site.url}" target="_blank" style="color:#FFD700;">{site.url}</a></td>
+                        <td><a href="{site.url}" target="_blank" style="color:#FFD700;">{site.url[:40]}...</a></td>
+                        <td>{selectors_info}</td>
                         <td>
                             <form action="/refresh_site/{site.id}" method="POST" style="display:inline;">
-                                <button type="submit">🔄 Refresh & Scrape</button>
+                                <button type="submit">🔄 Refresh</button>
                             </form>
                             <details style="display:inline;">
                                 <summary class="btn" style="cursor:pointer;">✏️ Edit</summary>
-                                <form action="/edit_site/{site.id}" method="POST" style="margin-top:10px;">
-                                    <input type="text" name="name" value="{site.name}" required>
-                                    <input type="url" name="url" value="{site.url}" required>
+                                <form action="/edit_site/{site.id}" method="POST" style="margin-top:10px; padding: 10px; background: #000; border-radius: 5px;">
+                                    <input type="text" name="name" value="{site.name}" required placeholder="Site Name">
+                                    <input type="url" name="url" value="{site.url}" required placeholder="URL">
+                                    <input type="text" name="product_selector" value="{site.product_selector or ''}" required placeholder="Product Selector">
+                                    <input type="text" name="title_selector" value="{site.title_selector or ''}" required placeholder="Title Selector">
+                                    <input type="text" name="price_selector" value="{site.price_selector or ''}" required placeholder="Price Selector">
+                                    <input type="text" name="link_selector" value="{site.link_selector or ''}" placeholder="Link Selector (optional)">
                                     <button type="submit">Save Changes</button>
                                 </form>
                             </details>
@@ -167,7 +227,7 @@ def admin_dashboard(request: Request, db: Session = Depends(get_db)):
                         <td>{deal.category or 'N/A'}</td>
                         <td>
                             <form action="/delete_deal/{deal.id}" method="POST" style="display:inline;">
-                                <button type="submit" class="btn-danger">️ Delete</button>
+                                <button type="submit" class="btn-danger">🗑️ Delete</button>
                             </form>
                         </td>
                     </tr>
@@ -200,7 +260,6 @@ def get_active_deals(db: Session = Depends(get_db)):
     ]
 
 
-# FIXED: Using api_route to support both GET and HEAD requests for UptimeRobot
 @app.api_route("/health", methods=["GET", "HEAD"])
 def health_check():
     return {"status": "ok"}

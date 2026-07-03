@@ -1,7 +1,6 @@
 import os
 from dotenv import load_dotenv
 
-# Load local .env file so PyCharm can find the variables
 load_dotenv()
 
 from datetime import datetime
@@ -13,23 +12,17 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 if not DATABASE_URL:
     raise ValueError("FATAL: DATABASE_URL environment variable is not set.")
 
-# 1. Switch to the modern psycopg (v3) driver
 if DATABASE_URL.startswith("postgresql://"):
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
 
-# 2. CTO FIX: Neon REQUIRES SSL. If it's missing from your URL, add it automatically!
 if "sslmode=" not in DATABASE_URL:
     if "?" in DATABASE_URL:
         DATABASE_URL += "&sslmode=require"
     else:
         DATABASE_URL += "?sslmode=require"
 
-# 3. CTO FIX: Give Neon 30 seconds to wake up from a paused state to prevent f405 timeouts
-connect_args = {
-    "connect_timeout": 30
-}
+connect_args = {"connect_timeout": 30}
 
-# pool_pre_ping=True prevents crashes from dropped idle connections
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,
@@ -47,6 +40,13 @@ class Site(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True, nullable=False)
     url = Column(String, nullable=False)
+
+    # CSS Selectors for scraping
+    product_selector = Column(String, nullable=True)
+    title_selector = Column(String, nullable=True)
+    price_selector = Column(String, nullable=True)
+    link_selector = Column(String, nullable=True)
+
     deals = relationship("Deal", back_populates="site", cascade="all, delete-orphan")
 
 
@@ -81,7 +81,6 @@ class PriceSnapshot(Base):
     deal = relationship("Deal", back_populates="snapshots")
 
 
-# Create tables on startup
 Base.metadata.create_all(bind=engine)
 
 
