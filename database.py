@@ -47,6 +47,9 @@ class Site(Base):
     price_selector = Column(String, nullable=True)
     link_selector = Column(String, nullable=True)
 
+    # Affiliate link (optional)
+    affiliate_link = Column(String, nullable=True)
+
     deals = relationship("Deal", back_populates="site", cascade="all, delete-orphan")
 
 
@@ -60,7 +63,6 @@ class Deal(Base):
     original_price = Column(Float, nullable=True)
     current_price = Column(Float, nullable=False)
 
-    # New columns for Telegram & Expiry logic
     category = Column(String, nullable=True)
     is_expired = Column(Boolean, default=False)
     telegram_message_id = Column(BigInteger, nullable=True)

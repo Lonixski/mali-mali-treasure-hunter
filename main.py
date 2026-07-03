@@ -36,6 +36,7 @@ def add_site(
         title_selector: str = Form(...),
         price_selector: str = Form(...),
         link_selector: str = Form(""),
+        affiliate_link: str = Form(""),
         db: Session = Depends(get_db)
 ):
     new_site = Site(
@@ -44,7 +45,8 @@ def add_site(
         product_selector=product_selector,
         title_selector=title_selector,
         price_selector=price_selector,
-        link_selector=link_selector if link_selector else None
+        link_selector=link_selector if link_selector else None,
+        affiliate_link=affiliate_link if affiliate_link else None
     )
     db.add(new_site)
     db.commit()
@@ -60,6 +62,7 @@ def edit_site(
         title_selector: str = Form(...),
         price_selector: str = Form(...),
         link_selector: str = Form(""),
+        affiliate_link: str = Form(""),
         db: Session = Depends(get_db)
 ):
     site = db.query(Site).filter(Site.id == site_id).first()
@@ -70,6 +73,16 @@ def edit_site(
         site.title_selector = title_selector
         site.price_selector = price_selector
         site.link_selector = link_selector if link_selector else None
+        site.affiliate_link = affiliate_link if affiliate_link else None
+        db.commit()
+    return RedirectResponse(url="/", status_code=303)
+
+
+@app.post("/delete_site/{site_id}")
+def delete_site(site_id: int, db: Session = Depends(get_db)):
+    site = db.query(Site).filter(Site.id == site_id).first()
+    if site:
+        db.delete(site)
         db.commit()
     return RedirectResponse(url="/", status_code=303)
 
@@ -108,16 +121,24 @@ def admin_dashboard(request: Request, db: Session = Depends(get_db)):
             .container { max-width: 1200px; margin: 0 auto; }
             .card { background-color: #141414; border: 1px solid #FFD700; padding: 20px; margin-bottom: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(255, 215, 0, 0.1); }
             table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-            th, td { border: 1px solid #333; padding: 10px; text-align: left; color: #FFF; }
+            th, td { border: 1px solid #333; padding: 10px; text-align: left; color: #FFF; vertical-align: top; }
             th { background-color: #000; color: #FFD700; text-transform: uppercase; font-size: 0.85em; }
             input[type="text"], input[type="url"] { background-color: #000; border: 1px solid #FFD700; color: #FFD700; padding: 8px; width: 95%; margin-bottom: 10px; font-size: 0.9em; }
-            button, .btn { background-color: #FFD700; color: #000; border: none; padding: 8px 15px; cursor: pointer; font-weight: bold; text-decoration: none; display: inline-block; margin-right: 5px; }
+            button, .btn { background-color: #FFD700; color: #000; border: none; padding: 8px 15px; cursor: pointer; font-weight: bold; text-decoration: none; display: inline-block; margin-right: 5px; margin-bottom: 5px; }
             button:hover, .btn:hover { background-color: #FFF; }
             .btn-danger { background-color: #8B0000; color: #FFF; }
             .btn-danger:hover { background-color: #FF4500; }
             .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
             .full-width { grid-column: 1 / -1; }
+            details { display: inline-block; }
+            summary { list-style: none; }
+            summary::-webkit-details-marker { display: none; }
         </style>
+        <script>
+            function confirmDelete(siteName) {
+                return confirm(`Are you sure you want to delete "${siteName}" and all its deals? This cannot be undone.`);
+            }
+        </script>
     </head>
     <body>
         <div class="container">
@@ -148,9 +169,13 @@ def admin_dashboard(request: Request, db: Session = Depends(get_db)):
                             <label style="color:#FFF;">Price Selector:</label>
                             <input type="text" name="price_selector" required placeholder="e.g., span.price">
                         </div>
-                        <div class="full-width">
+                        <div>
                             <label style="color:#FFF;">Link Selector (optional):</label>
                             <input type="text" name="link_selector" placeholder="e.g., a.product-link">
+                        </div>
+                        <div>
+                            <label style="color:#FFF;">Affiliate Link (optional):</label>
+                            <input type="text" name="affiliate_link" placeholder="e.g., https://your-affiliate-link.com">
                         </div>
                     </div>
                     <button type="submit" style="margin-top: 10px;">Add Site</button>
@@ -165,6 +190,7 @@ def admin_dashboard(request: Request, db: Session = Depends(get_db)):
                         <th>Name</th>
                         <th>URL</th>
                         <th>Selectors</th>
+                        <th>Affiliate</th>
                         <th>Actions</th>
                     </tr>
     """
@@ -178,11 +204,14 @@ def admin_dashboard(request: Request, db: Session = Depends(get_db)):
             </small>
         """
 
+        affiliate_info = site.affiliate_link if site.affiliate_link else "None"
+
         html += f"""
                     <tr>
                         <td>{site.name}</td>
                         <td><a href="{site.url}" target="_blank" style="color:#FFD700;">{site.url[:40]}...</a></td>
                         <td>{selectors_info}</td>
+                        <td><small style="color:#AAA;">{affiliate_info}</small></td>
                         <td>
                             <form action="/refresh_site/{site.id}" method="POST" style="display:inline;">
                                 <button type="submit">🔄 Refresh</button>
@@ -196,9 +225,13 @@ def admin_dashboard(request: Request, db: Session = Depends(get_db)):
                                     <input type="text" name="title_selector" value="{site.title_selector or ''}" required placeholder="Title Selector">
                                     <input type="text" name="price_selector" value="{site.price_selector or ''}" required placeholder="Price Selector">
                                     <input type="text" name="link_selector" value="{site.link_selector or ''}" placeholder="Link Selector (optional)">
+                                    <input type="text" name="affiliate_link" value="{site.affiliate_link or ''}" placeholder="Affiliate Link (optional)">
                                     <button type="submit">Save Changes</button>
                                 </form>
                             </details>
+                            <form action="/delete_site/{site.id}" method="POST" style="display:inline;" onsubmit="return confirmDelete('{site.name}');">
+                                <button type="submit" class="btn-danger">🗑️ Delete</button>
+                            </form>
                         </td>
                     </tr>
         """

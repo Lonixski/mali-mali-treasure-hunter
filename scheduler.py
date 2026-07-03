@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 def send_telegram_message(message):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         logger.warning("⚠️ Telegram not configured.")
-        return
+        return None
 
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -111,6 +111,9 @@ def scrape_single_site(site_id: int, db):
                         raw_link = raw_link[1:]
                     raw_link = f"{base_url}/{raw_link}"
 
+                # Use affiliate link if available, otherwise use raw product link
+                display_link = site.affiliate_link if site.affiliate_link else raw_link
+
                 # Check if deal already exists
                 existing_deal = db.query(Deal).filter(
                     Deal.site_id == site.id,
@@ -134,7 +137,7 @@ def scrape_single_site(site_id: int, db):
 
 🛍️ {title}
 💰 KES {price_value:,.0f}
-🔗 <a href="{raw_link}">View Deal</a>
+🔗 <a href="{display_link}">View Deal</a>
 
 ⏰ {datetime.now().strftime('%H:%M')}"""
 
@@ -166,7 +169,7 @@ def scrape_single_site(site_id: int, db):
 🛍️ {title}
 📉 Was: KES {old_price:,.0f}
 ✅ Now: KES {price_value:,.0f}
-🔗 <a href="{raw_link}">View Deal</a>
+🔗 <a href="{display_link}">View Deal</a>
 
 ⏰ {datetime.now().strftime('%H:%M')}"""
                             send_telegram_message(message)
