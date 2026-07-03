@@ -1,0 +1,11 @@
+# Tell Git to ignore the .env file so our passwords don't get uploaded to GitHub
+.env
+
+# Tell Git to ignore Python's temporary cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Tell Git to ignore the virtual environment folder
+.venv/
+venv/

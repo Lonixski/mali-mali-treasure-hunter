@@ -1,5 +1,10 @@
 import os
 import logging
+from dotenv import load_dotenv
+
+# Load local .env file so PyCharm can find the variables
+load_dotenv()
+
 import requests
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -68,7 +73,6 @@ def handle_expired_deal(db, deal):
         logger.error(f"Delete exception: {str(e)}")
 
     # Strategy 2: Fallback for messages > 48 hours old (Telegram API limitation)
-    # We edit the message to show it is expired instead of deleting it.
     logger.info(f"Message >48h old or delete failed. Editing message to show EXPIRED for: {deal.title}")
     url_edit = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/editMessageText"
     tags = f"#{deal.category.replace(' ', '')} #MaliMali" if deal.category else "#MaliMali"
@@ -103,8 +107,6 @@ def check_and_expire_deals(db):
 
     for deal in active_deals:
         try:
-            # CTO NOTE: Replace this mock logic with your actual BeautifulSoup logic.
-            # We check if the URL returns a 404 or if the price changed.
             headers = {'User-Agent': 'Mozilla/5.0 (MaliMaliBot/1.0)'}
             response = requests.get(deal.url, headers=headers, timeout=15)
 
@@ -113,11 +115,8 @@ def check_and_expire_deals(db):
             if response.status_code == 404:
                 is_gone = True
             else:
-                # TODO: Parse HTML to check if "Out of Stock" is present, or if price increased.
                 soup = BeautifulSoup(response.text, 'html.parser')
-                # Example logic:
-                # out_of_stock_elem = soup.find(class_='out-of-stock')
-                # if out_of_stock_elem: is_gone = True
+                # TODO: Add logic to check for "Out of Stock" or price changes
 
             if is_gone:
                 logger.info(f"Deal expired: {deal.title}")
@@ -132,12 +131,7 @@ def scrape_new_deals(db):
     sites = db.query(Site).all()
     for site in sites:
         logger.info(f"Scraping {site.name}...")
-        # TODO: Implement your BeautifulSoup scraping logic here.
-        # When a new deal is found:
-        # new_deal = Deal(site_id=site.id, title="...", url="...", current_price=100.0, category="Electronics")
-        # db.add(new_deal)
-        # db.commit()
-        # send_telegram_deal(db, new_deal)
+        # TODO: Implement BeautifulSoup scraping logic here.
         pass
 
 
@@ -146,9 +140,7 @@ def run_scrape_and_notify():
     logger.info("Starting Mali Mali Master Scrape Cycle...")
     db = SessionLocal()
     try:
-        # 1. Clean up dead links first
         check_and_expire_deals(db)
-        # 2. Scrape for new deals
         scrape_new_deals(db)
     except Exception as e:
         logger.error(f"Master scrape cycle failed: {str(e)}")
@@ -167,8 +159,8 @@ def init_scheduler():
         func=run_scrape_and_notify,
         trigger=trigger,
         id="mali_mali_master_scraper",
-        max_instances=1,  # Prevents overlapping scrapes
-        misfire_grace_time=60,  # Handles brief Render restarts gracefully
+        max_instances=1,
+        misfire_grace_time=60,
         replace_existing=True
     )
 

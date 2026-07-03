@@ -1,4 +1,9 @@
 import os
+from dotenv import load_dotenv
+
+# Load local .env file so PyCharm can find the variables
+load_dotenv()
+
 from datetime import datetime
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Boolean, BigInteger, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
