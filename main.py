@@ -8,7 +8,7 @@ import logging
 from database import get_db, Deal, engine, Base
 from scheduler import init_scheduler
 
-# Set up logging to see errors in Render logs
+# Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -16,7 +16,9 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: Initialize the background scheduler
+    logger.info("Initializing Mali Mali scheduler...")
     init_scheduler()
+    logger.info("Scheduler initialized successfully!")
     yield
 
 
@@ -25,18 +27,19 @@ app = FastAPI(title="Mali Mali Treasure Hunter API", lifespan=lifespan)
 
 @app.on_event("startup")
 def startup_db():
-    # Ensure tables exist
+    logger.info("Creating database tables if needed...")
     Base.metadata.create_all(bind=engine)
+    logger.info("Database startup complete!")
 
 
 @app.get("/")
 def admin_dashboard(request: Request, db: Session = Depends(get_db)):
     try:
-        # Query active deals
+        logger.info("Loading admin dashboard...")
         active_deals = db.query(Deal).filter(Deal.is_expired == False).all()
-        logger.info(f"Successfully loaded {len(active_deals)} active deals")
+        logger.info(f"Found {len(active_deals)} active deals")
 
-        # STRICT MANADATE: Black and Gold Color Scheme
+        # STRICT BLACK AND GOLD DESIGN MANDATE
         html = f"""
         <!DOCTYPE html>
         <html>
@@ -86,9 +89,8 @@ def admin_dashboard(request: Request, db: Session = Depends(get_db)):
         return HTMLResponse(content=html)
 
     except Exception as e:
-        # CTO FIX: Log the exact error so we can see it in Render logs
         logger.error(f"ADMIN DASHBOARD ERROR: {str(e)}", exc_info=True)
-        return HTMLResponse(content=f"<h1>Error loading dashboard</h1><p>Check Render logs for details: {str(e)}</p>",
+        return HTMLResponse(content=f"<h1 style='color: red;'>Error</h1><p>Check Render logs: {str(e)}</p>",
                             status_code=500)
 
 
@@ -111,6 +113,11 @@ def get_active_deals(db: Session = Depends(get_db)):
     except Exception as e:
         logger.error(f"DEALS ENDPOINT ERROR: {str(e)}", exc_info=True)
         return {"error": str(e)}
+
+
+@app.get("/health")
+def health_check():
+    return {"status": "ok", "message": "Mali Mali API is running"}
 
 
 if __name__ == "__main__":
