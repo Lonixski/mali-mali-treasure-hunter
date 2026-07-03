@@ -13,12 +13,31 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 if not DATABASE_URL:
     raise ValueError("FATAL: DATABASE_URL environment variable is not set.")
 
-# CTO FIX: Automatically switch to the modern psycopg (v3) driver to avoid Python 3.14 build errors
+# 1. Switch to the modern psycopg (v3) driver
 if DATABASE_URL.startswith("postgresql://"):
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
 
-# pool_pre_ping=True prevents crashes from dropped idle connections on Neon
-engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_size=5, max_overflow=10)
+# 2. CTO FIX: Neon REQUIRES SSL. If it's missing from your URL, add it automatically!
+if "sslmode=" not in DATABASE_URL:
+    if "?" in DATABASE_URL:
+        DATABASE_URL += "&sslmode=require"
+    else:
+        DATABASE_URL += "?sslmode=require"
+
+# 3. CTO FIX: Give Neon 30 seconds to wake up from a paused state to prevent f405 timeouts
+connect_args = {
+    "connect_timeout": 30
+}
+
+# pool_pre_ping=True prevents crashes from dropped idle connections
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True,
+    pool_size=5,
+    max_overflow=10,
+    connect_args=connect_args
+)
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -42,9 +61,9 @@ class Deal(Base):
     current_price = Column(Float, nullable=False)
 
     # New columns for Telegram & Expiry logic
-    category = Column(String, nullable=True)  # For Telegram Hashtags
+    category = Column(String, nullable=True)
     is_expired = Column(Boolean, default=False)
-    telegram_message_id = Column(BigInteger, nullable=True)  # To delete/edit posts later
+    telegram_message_id = Column(BigInteger, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
