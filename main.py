@@ -93,11 +93,11 @@ def admin_dashboard(request: Request, db: Session = Depends(get_db)):
     </head>
     <body>
         <div class="container">
-            <h1>🏆 MALI MALI COMMAND CENTER</h1>
+            <h1> MALI MALI COMMAND CENTER</h1>
 
             <!-- ADD WEBSITE SECTION -->
             <div class="card">
-                <h2>➕ Add New Website</h2>
+                <h2> Add New Website</h2>
                 <form action="/add_site" method="POST" class="form-row">
                     <div style="flex: 1;">
                         <label style="color:#FFF;">Site Name:</label>
@@ -167,7 +167,7 @@ def admin_dashboard(request: Request, db: Session = Depends(get_db)):
                         <td>{deal.category or 'N/A'}</td>
                         <td>
                             <form action="/delete_deal/{deal.id}" method="POST" style="display:inline;">
-                                <button type="submit" class="btn-danger">🗑️ Delete</button>
+                                <button type="submit" class="btn-danger">️ Delete</button>
                             </form>
                         </td>
                     </tr>
@@ -200,7 +200,8 @@ def get_active_deals(db: Session = Depends(get_db)):
     ]
 
 
-@app.get("/health", methods=["GET", "HEAD"])
+# FIXED: Using api_route to support both GET and HEAD requests for UptimeRobot
+@app.api_route("/health", methods=["GET", "HEAD"])
 def health_check():
     return {"status": "ok"}
 
