@@ -113,7 +113,7 @@ def admin_dashboard(request: Request, db: Session = Depends(get_db)):
 
             <!-- MANAGE WEBSITES SECTION -->
             <div class="card">
-                <h2> Managed Websites</h2>
+                <h2>🛠️ Managed Websites</h2>
                 <table>
                     <tr>
                         <th>Name</th>
@@ -167,7 +167,7 @@ def admin_dashboard(request: Request, db: Session = Depends(get_db)):
                         <td>{deal.category or 'N/A'}</td>
                         <td>
                             <form action="/delete_deal/{deal.id}" method="POST" style="display:inline;">
-                                <button type="submit" class="btn-danger">️ Delete</button>
+                                <button type="submit" class="btn-danger">🗑️ Delete</button>
                             </form>
                         </td>
                     </tr>
@@ -200,7 +200,7 @@ def get_active_deals(db: Session = Depends(get_db)):
     ]
 
 
-@app.get("/health")
+@app.get("/health", methods=["GET", "HEAD"])
 def health_check():
     return {"status": "ok"}
 
