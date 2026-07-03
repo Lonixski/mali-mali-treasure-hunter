@@ -13,6 +13,10 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 if not DATABASE_URL:
     raise ValueError("FATAL: DATABASE_URL environment variable is not set.")
 
+# CTO FIX: Automatically switch to the modern psycopg (v3) driver to avoid Python 3.14 build errors
+if DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
+
 # pool_pre_ping=True prevents crashes from dropped idle connections on Neon
 engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_size=5, max_overflow=10)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
