@@ -41,10 +41,9 @@ def extract_price_value(price_str: str) -> float:
         return 0.0
 
 
-def scrape_single_site(site):
-    print(f"  🔍 Visiting: {site.name}...")
+def scrape_single_site(site_name, site_url, product_selector, title_selector, price_selector, link_selector):
+    print(f"  🔍 Visiting: {site_name}...")
 
-    # More realistic browser headers to avoid blocking
     headers = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
@@ -59,59 +58,39 @@ def scrape_single_site(site):
 
     db = SessionLocal()
 
-    # Try up to 3 times with increasing delays
-    for attempt in range(3):
-        try:
-            response = requests.get(site.url, headers=headers, timeout=15)
-
-            if response.status_code == 200:
-                break
-            elif response.status_code in [403, 429, 503]:
-                print(f"    ⚠️ Attempt {attempt + 1}: Got {response.status_code}, waiting...")
-                time.sleep(2 ** attempt)  # Wait 1s, 2s, 4s
-                continue
-            else:
-                print(f"    ❌ Failed to connect to {site.name} (Status: {response.status_code})")
-                return 0, 0
-        except requests.exceptions.Timeout:
-            print(f"    ⏱️ Attempt {attempt + 1}: Timeout, retrying...")
-            time.sleep(2 ** attempt)
-            continue
-        except Exception as e:
-            print(f"    ⚠️ Attempt {attempt + 1}: Error - {e}")
-            time.sleep(2 ** attempt)
-            continue
-    else:
-        print(f"    ❌ Failed after 3 attempts: {site.name}")
-        return 0, 0
-
     try:
+        response = requests.get(site_url, headers=headers, timeout=15)
+
+        if response.status_code != 200:
+            print(f"    ❌ Failed to connect to {site_name} (Status: {response.status_code})")
+            return 0, 0
+
         soup = BeautifulSoup(response.text, 'html.parser')
-        products = soup.select(site.product_selector)
+        products = soup.select(product_selector)
 
         if not products:
-            print(f"    ⚠️ No products found with selector: {site.product_selector}")
+            print(f"    ⚠️ No products found with selector: {product_selector}")
             return 0, 0
 
         for product in products[:10]:
             try:
-                title_element = product.select_one(site.title_selector)
+                title_element = product.select_one(title_selector)
                 title = title_element.text.strip() if title_element else "No Title"
 
-                price_element = product.select_one(site.price_selector)
+                price_element = product.select_one(price_selector)
                 price = price_element.text.strip() if price_element else "No Price"
 
-                link_element = product.select_one(site.link_selector)
+                link_element = product.select_one(link_selector)
                 raw_link = link_element['href'] if link_element else "#"
 
                 if not raw_link.startswith('http'):
-                    base_url = site.url.rstrip('/')
+                    base_url = site_url.rstrip('/')
                     if raw_link.startswith('/'):
                         raw_link = raw_link[1:]
                     raw_link = f"{base_url}/{raw_link}"
 
                 snapshot = PriceSnapshot(
-                    store=site.name,
+                    store=site_name,
                     product=title,
                     price=price,
                     recorded_at=datetime.now().isoformat()
@@ -119,13 +98,13 @@ def scrape_single_site(site):
                 db.add(snapshot)
 
                 existing_deal = db.query(Deal).filter(
-                    Deal.store == site.name,
+                    Deal.store == site_name,
                     Deal.product == title
                 ).first()
 
                 if not existing_deal:
                     new_deal = Deal(
-                        store=site.name,
+                        store=site_name,
                         product=title,
                         price=price,
                         link=raw_link,
@@ -135,7 +114,7 @@ def scrape_single_site(site):
                     db.add(new_deal)
                     new_deals_count += 1
 
-                    message = f"""🔥 <b>NEW DEAL on {site.name}!</b>
+                    message = f"""🔥 <b>NEW DEAL on {site_name}!</b>
 
 🛍️ {title}
 💰 {price}
@@ -155,7 +134,7 @@ def scrape_single_site(site):
                         price_drops_count += 1
 
                         if new_value < old_value and old_value > 0:
-                            message = f"""💸 <b>PRICE DROP on {site.name}!</b>
+                            message = f"""💸 <b>PRICE DROP on {site_name}!</b>
 
 🛍️ {title}
 📉 Was: {old_price}
@@ -169,12 +148,14 @@ def scrape_single_site(site):
 
             except Exception as e:
                 print(f"    ⚠️ Error extracting product: {e}")
+                db.rollback()
                 continue
 
         db.commit()
 
     except Exception as e:
-        print(f"    ⚠️ Error parsing {site.name}: {e}")
+        print(f"    ⚠️ Error scraping {site_name}: {e}")
+        db.rollback()
     finally:
         db.close()
 
@@ -185,19 +166,30 @@ def scrape_and_notify():
     print(f"\n⏰ [{datetime.now().strftime('%H:%M:%S')}] Running scheduled scrape...")
 
     db = SessionLocal()
-    sites = db.query(Site).all()
-    db.close()
+    try:
+        sites = db.query(Site).all()
+        site_data = [
+            (site.name, site.url, site.product_selector, site.title_selector, site.price_selector, site.link_selector)
+            for site in sites]
+    except Exception as e:
+        print(f"❌ Error loading sites: {e}")
+        db.rollback()
+        site_data = []
+    finally:
+        db.close()
 
     total_new = 0
     total_drops = 0
 
-    for site in sites:
+    for site_name, site_url, product_selector, title_selector, price_selector, link_selector in site_data:
         try:
-            new_count, drop_count = scrape_single_site(site)
+            new_count, drop_count = scrape_single_site(
+                site_name, site_url, product_selector, title_selector, price_selector, link_selector
+            )
             total_new += new_count
             total_drops += drop_count
         except Exception as e:
-            print(f"    ❌ Critical error on {site.name}: {e}")
+            print(f"    ❌ Critical error on {site_name}: {e}")
             continue
 
     print(f"✅ Scrape complete! {total_new} new deals, {total_drops} price changes.\n")
