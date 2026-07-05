@@ -1,9 +1,8 @@
-fastapi==0.115.0
-uvicorn==0.30.6
-sqlalchemy==2.0.35
-beautifulsoup4==4.12.3
-requests==2.32.3
+fastapi==0.104.1
+uvicorn==0.24.0
+sqlalchemy==2.0.23
+psycopg2-binary==2.9.9
+beautifulsoup4==4.12.2
+requests==2.31.0
 apscheduler==3.10.4
-python-multipart==0.0.9
-psycopg[binary]==3.2.10
-python-dotenv==1.0.1
+python-multipart==0.0.6
