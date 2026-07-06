@@ -9,7 +9,7 @@ import time
 from database import SessionLocal, Site, Deal, PriceSnapshot
 
 TELEGRAM_BOT_TOKEN = "8336727259:AAFr9XngoYmy9RXXgXdsj101V2ubbj0j-0k"
-TELEGRAM_CHAT_ID = "125601423"
+TELEGRAM_CHAT_ID = "-1004366904049"
 
 
 def send_telegram_message(message):
@@ -56,7 +56,6 @@ def scrape_single_site(site_name, site_url, product_selector, title_selector, pr
     new_deals_count = 0
     price_drops_count = 0
 
-    # Create a fresh session for this site
     db = SessionLocal()
 
     try:
@@ -84,7 +83,6 @@ def scrape_single_site(site_name, site_url, product_selector, title_selector, pr
                 link_element = product.select_one(link_selector)
                 raw_link = link_element['href'] if link_element else "#"
 
-                # Extract image URL
                 image_element = product.select_one('img[data-src]') or product.select_one('img[src]')
                 image_url = ""
                 if image_element:
@@ -97,6 +95,7 @@ def scrape_single_site(site_name, site_url, product_selector, title_selector, pr
                         raw_link = raw_link[1:]
                     raw_link = f"{base_url}/{raw_link}"
 
+                # Create snapshot
                 snapshot = PriceSnapshot(
                     store=site_name,
                     product=title,
@@ -104,8 +103,9 @@ def scrape_single_site(site_name, site_url, product_selector, title_selector, pr
                     recorded_at=datetime.now().isoformat()
                 )
                 db.add(snapshot)
+                db.flush()  # Flush to get ID without committing
 
-                # Query for existing deal within this session
+                # Query for existing deal
                 existing_deal = db.query(Deal).filter(
                     Deal.store == site_name,
                     Deal.product == title
@@ -117,7 +117,7 @@ def scrape_single_site(site_name, site_url, product_selector, title_selector, pr
                         product=title,
                         price=price,
                         link=raw_link,
-                        image_url=image_url,
+                        image_url=image_url or None,  # Use None instead of empty string
                         discovered_at=datetime.now().isoformat(),
                         is_active=1
                     )
@@ -158,12 +158,13 @@ def scrape_single_site(site_name, site_url, product_selector, title_selector, pr
                         else:
                             print(f"    📈 Price increased: {old_price} → {price}")
 
+                # Commit after each product to avoid large transactions
+                db.commit()
+
             except Exception as e:
                 print(f"    ⚠️ Error extracting product: {e}")
                 db.rollback()
                 continue
-
-        db.commit()
 
     except Exception as e:
         print(f"    ⚠️ Error scraping {site_name}: {e}")
@@ -177,7 +178,6 @@ def scrape_single_site(site_name, site_url, product_selector, title_selector, pr
 def scrape_and_notify():
     print(f"\n⏰ [{datetime.now().strftime('%H:%M:%S')}] Running scheduled scrape...")
 
-    # Load all site data as plain strings (not SQLAlchemy objects)
     db = SessionLocal()
     try:
         sites = db.query(Site).all()
