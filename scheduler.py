@@ -9,7 +9,7 @@ import time
 from database import SessionLocal, Site, Deal, PriceSnapshot
 
 TELEGRAM_BOT_TOKEN = "8336727259:AAFr9XngoYmy9RXXgXdsj101V2ubbj0j-0k"
-TELEGRAM_CHAT_ID = "-1004366904049"
+TELEGRAM_CHAT_ID = "125601423"
 
 
 def send_telegram_message(message):
@@ -56,6 +56,7 @@ def scrape_single_site(site_name, site_url, product_selector, title_selector, pr
     new_deals_count = 0
     price_drops_count = 0
 
+    # Create a fresh session for this site
     db = SessionLocal()
 
     try:
@@ -104,6 +105,7 @@ def scrape_single_site(site_name, site_url, product_selector, title_selector, pr
                 )
                 db.add(snapshot)
 
+                # Query for existing deal within this session
                 existing_deal = db.query(Deal).filter(
                     Deal.store == site_name,
                     Deal.product == title
@@ -175,6 +177,7 @@ def scrape_single_site(site_name, site_url, product_selector, title_selector, pr
 def scrape_and_notify():
     print(f"\n⏰ [{datetime.now().strftime('%H:%M:%S')}] Running scheduled scrape...")
 
+    # Load all site data as plain strings (not SQLAlchemy objects)
     db = SessionLocal()
     try:
         sites = db.query(Site).all()
@@ -183,7 +186,6 @@ def scrape_and_notify():
             for site in sites]
     except Exception as e:
         print(f"❌ Error loading sites: {e}")
-        db.rollback()
         site_data = []
     finally:
         db.close()
