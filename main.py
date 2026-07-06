@@ -9,27 +9,30 @@ import os
 import threading
 
 
-# Drop and recreate the deals table to fix corruption
-def reset_database():
+# NUCLEAR RESET: Drop ALL tables and recreate
+def nuclear_reset():
     try:
         with engine.begin() as conn:
             if "sqlite" in str(engine.url):
                 conn.execute(text("DROP TABLE IF EXISTS deals"))
                 conn.execute(text("DROP TABLE IF EXISTS price_snapshots"))
-                print("✅ Dropped corrupted tables (SQLite)")
+                conn.execute(text("DROP TABLE IF EXISTS sites"))
+                print("✅ Dropped ALL tables (SQLite)")
             else:
-                conn.execute(text("DROP TABLE IF EXISTS deals"))
+                # For PostgreSQL, need to handle dependencies
                 conn.execute(text("DROP TABLE IF EXISTS price_snapshots"))
-                print("✅ Dropped corrupted tables (PostgreSQL)")
+                conn.execute(text("DROP TABLE IF EXISTS deals"))
+                conn.execute(text("DROP TABLE IF EXISTS sites"))
+                print("✅ Dropped ALL tables (PostgreSQL)")
     except Exception as e:
-        print(f"⚠️ Reset error: {e}")
+        print(f"⚠️ Nuclear reset error: {e}")
 
 
-reset_database()
+nuclear_reset()
 
-# Now create tables with correct schema
+# Recreate all tables with correct schema
 Base.metadata.create_all(bind=engine)
-print("✅ Recreated tables with correct schema")
+print("✅ Recreated ALL tables with correct schema")
 
 app = FastAPI(title="Mali Mali Treasure Hunter API")
 
