@@ -315,6 +315,11 @@ def debug_telegram():
     }
 
 
+@app.api_route("/health", methods=["GET", "HEAD"])
+def health_check():
+    return {"status": "healthy"}
+
+
 @app.api_route("/", methods=["GET", "HEAD"])
 def home():
     return {"message": "Welcome to Mali Mali Treasure Hunter! Visit /deals for data, /admin for dashboard."}
