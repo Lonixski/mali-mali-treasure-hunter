@@ -8,56 +8,28 @@ from scheduler import start_scheduler, scrape_in_background
 import os
 import threading
 
-Base.metadata.create_all(bind=engine)
 
-
-# One-time migration: Add missing columns if they don't exist
-def migrate_database():
+# Drop and recreate the deals table to fix corruption
+def reset_database():
     try:
-        with engine.begin() as conn:  # Changed to engine.begin() for auto-commit
+        with engine.begin() as conn:
             if "sqlite" in str(engine.url):
-                # SQLite migration
-                # Check deals table for image_url
-                result = conn.execute(text("PRAGMA table_info(deals)"))
-                deal_columns = [row[1] for row in result]
-                if "image_url" not in deal_columns:
-                    conn.execute(text("ALTER TABLE deals ADD COLUMN image_url VARCHAR"))
-                    print("✅ Added image_url column to deals table (SQLite)")
-
-                # Check sites table for affiliate_id
-                result = conn.execute(text("PRAGMA table_info(sites)"))
-                site_columns = [row[1] for row in result]
-                if "affiliate_id" not in site_columns:
-                    conn.execute(text("ALTER TABLE sites ADD COLUMN affiliate_id VARCHAR"))
-                    print("✅ Added affiliate_id column to sites table (SQLite)")
+                conn.execute(text("DROP TABLE IF EXISTS deals"))
+                conn.execute(text("DROP TABLE IF EXISTS price_snapshots"))
+                print("✅ Dropped corrupted tables (SQLite)")
             else:
-                # PostgreSQL migration
-                # Check deals table for image_url
-                result = conn.execute(text("""
-                                           SELECT column_name
-                                           FROM information_schema.columns
-                                           WHERE table_name = 'deals'
-                                           """))
-                deal_columns = [row[0] for row in result]
-                if "image_url" not in deal_columns:
-                    conn.execute(text("ALTER TABLE deals ADD COLUMN image_url VARCHAR"))
-                    print("✅ Added image_url column to deals table (PostgreSQL)")
-
-                # Check sites table for affiliate_id
-                result = conn.execute(text("""
-                                           SELECT column_name
-                                           FROM information_schema.columns
-                                           WHERE table_name = 'sites'
-                                           """))
-                site_columns = [row[0] for row in result]
-                if "affiliate_id" not in site_columns:
-                    conn.execute(text("ALTER TABLE sites ADD COLUMN affiliate_id VARCHAR"))
-                    print("✅ Added affiliate_id column to sites table (PostgreSQL)")
+                conn.execute(text("DROP TABLE IF EXISTS deals"))
+                conn.execute(text("DROP TABLE IF EXISTS price_snapshots"))
+                print("✅ Dropped corrupted tables (PostgreSQL)")
     except Exception as e:
-        print(f"⚠️ Migration error: {e}")
+        print(f"⚠️ Reset error: {e}")
 
 
-migrate_database()
+reset_database()
+
+# Now create tables with correct schema
+Base.metadata.create_all(bind=engine)
+print("✅ Recreated tables with correct schema")
 
 app = FastAPI(title="Mali Mali Treasure Hunter API")
 
