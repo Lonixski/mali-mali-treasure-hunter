@@ -14,7 +14,7 @@ Base.metadata.create_all(bind=engine)
 # One-time migration: Add missing columns if they don't exist
 def migrate_database():
     try:
-        with engine.connect() as conn:
+        with engine.begin() as conn:  # Changed to engine.begin() for auto-commit
             if "sqlite" in str(engine.url):
                 # SQLite migration
                 # Check deals table for image_url
