@@ -2,12 +2,42 @@ from fastapi import FastAPI, Depends, Request, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from database import Site, Deal, PriceSnapshot, get_db, engine, Base, SessionLocal
 from scheduler import start_scheduler, scrape_in_background
 import os
 import threading
 
 Base.metadata.create_all(bind=engine)
+
+
+# One-time migration: Add image_url column if it doesn't exist
+def migrate_database():
+    try:
+        with engine.connect() as conn:
+            if "sqlite" in str(engine.url):
+                # SQLite migration
+                result = conn.execute(text("PRAGMA table_info(deals)"))
+                columns = [row[1] for row in result]
+                if "image_url" not in columns:
+                    conn.execute(text("ALTER TABLE deals ADD COLUMN image_url VARCHAR"))
+                    print("✅ Added image_url column to deals table (SQLite)")
+            else:
+                # PostgreSQL migration
+                result = conn.execute(text("""
+                                           SELECT column_name
+                                           FROM information_schema.columns
+                                           WHERE table_name = 'deals'
+                                           """))
+                columns = [row[0] for row in result]
+                if "image_url" not in columns:
+                    conn.execute(text("ALTER TABLE deals ADD COLUMN image_url VARCHAR"))
+                    print("✅ Added image_url column to deals table (PostgreSQL)")
+    except Exception as e:
+        print(f"⚠️ Migration error: {e}")
+
+
+migrate_database()
 
 app = FastAPI(title="Mali Mali Treasure Hunter API")
 
