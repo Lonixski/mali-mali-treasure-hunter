@@ -1,21 +1,29 @@
-from apscheduler.schedulers.background import BackgroundScheduler
-from sqlalchemy.orm import Session
+import os
+import logging
+from dotenv import load_dotenv
+
+load_dotenv()
+
 import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
-import os
-import threading
-import time
-from database import SessionLocal, Site, Deal, PriceSnapshot
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.interval import IntervalTrigger
+from database import SessionLocal, Deal, PriceSnapshot, Site
 
-TELEGRAM_BOT_TOKEN = "8336727259:AAFr9XngoYmy9RXXgXdsj101V2ubbj0j-0k"
-TELEGRAM_CHAT_ID = "-1004366904049"
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+
+# --- TELEGRAM FUNCTIONS ---
 
 def send_telegram_message(message):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print("⚠️ Telegram not configured.")
-        return
+        logger.warning("⚠️ Telegram not configured.")
+        return None
 
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -26,11 +34,14 @@ def send_telegram_message(message):
         }
         response = requests.post(url, data=data, timeout=10)
         if response.status_code == 200:
-            print("📱 Telegram notification sent!")
+            message_id = response.json()['result']['message_id']
+            logger.info("📱 Telegram notification sent!")
+            return message_id
         else:
-            print(f"❌ Telegram error: {response.text}")
+            logger.error(f"❌ Telegram error: {response.text}")
     except Exception as e:
-        print(f"❌ Failed to send Telegram: {e}")
+        logger.error(f"❌ Failed to send Telegram: {e}")
+    return None
 
 
 def extract_price_value(price_str: str) -> float:
@@ -41,8 +52,23 @@ def extract_price_value(price_str: str) -> float:
         return 0.0
 
 
-def scrape_single_site(site_name, site_url, product_selector, title_selector, price_selector, link_selector):
-    print(f"  🔍 Visiting: {site_name}...")
+# --- SCRAPER LOGIC ---
+
+def scrape_single_site(site_id: int, db):
+    """Scrapes a single site using its CSS selectors."""
+    site = db.query(Site).filter(Site.id == site_id).first()
+    if not site:
+        logger.error(f"Site ID {site_id} not found.")
+        return 0, 0
+
+    if not site.product_selector or not site.title_selector or not site.price_selector:
+        logger.warning(f"⚠️ {site.name} is missing CSS selectors. Skipping.")
+        return 0, 0
+
+    logger.info(f"  🔍 Visiting: {site.name}...")
+    logger.info(f"     Product selector: {site.product_selector}")
+    logger.info(f"     Title selector: {site.title_selector}")
+    logger.info(f"     Price selector: {site.price_selector}")
 
     headers = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -56,166 +82,180 @@ def scrape_single_site(site_name, site_url, product_selector, title_selector, pr
     new_deals_count = 0
     price_drops_count = 0
 
-    db = SessionLocal()
-
     try:
-        response = requests.get(site_url, headers=headers, timeout=15)
+        response = requests.get(site.url, headers=headers, timeout=15)
 
         if response.status_code != 200:
-            print(f"    ❌ Failed to connect to {site_name} (Status: {response.status_code})")
+            logger.error(f"    ❌ Failed to connect to {site.name} (Status: {response.status_code})")
             return 0, 0
 
         soup = BeautifulSoup(response.text, 'html.parser')
-        products = soup.select(product_selector)
+        products = soup.select(site.product_selector)
+
+        logger.info(f"    📦 Found {len(products)} product containers")
 
         if not products:
-            print(f"    ⚠️ No products found with selector: {product_selector}")
+            logger.warning(f"    ⚠️ No products found. Check your product_selector!")
             return 0, 0
 
-        for product in products[:10]:
+        for idx, product in enumerate(products[:10]):
             try:
-                title_element = product.select_one(title_selector)
-                title = title_element.text.strip() if title_element else "No Title"
+                # Extract title
+                title_element = product.select_one(site.title_selector)
+                title = title_element.text.strip() if title_element else None
 
-                price_element = product.select_one(price_selector)
-                price = price_element.text.strip() if price_element else "No Price"
+                # Extract price
+                price_element = product.select_one(site.price_selector)
+                price_str = price_element.text.strip() if price_element else None
+                price_value = extract_price_value(price_str) if price_str else 0.0
 
-                link_element = product.select_one(link_selector)
-                raw_link = link_element['href'] if link_element else "#"
+                # Extract link
+                link_element = product.select_one(site.link_selector) if site.link_selector else None
+                raw_link = link_element['href'] if link_element else None
 
-                image_element = product.select_one('img[data-src]') or product.select_one('img[src]')
-                image_url = ""
-                if image_element:
-                    image_url = image_element.get('data-src') or image_element.get('src') or ""
-                    image_url = image_url.rstrip('#')
+                # DEBUG: Log what we found
+                logger.info(f"    [{idx + 1}] Title: {title or 'MISSING'}")
+                logger.info(f"    [{idx + 1}] Price: {price_str or 'MISSING'} (parsed: {price_value})")
+                logger.info(f"    [{idx + 1}] Link: {raw_link or 'MISSING'}")
 
+                # VALIDATION: Skip if we don't have essential data
+                if not title or title == "No Title":
+                    logger.warning(f"    ⚠️ Skipping product {idx + 1}: No title found. Check your title_selector!")
+                    continue
+
+                if price_value == 0.0:
+                    logger.warning(
+                        f"    ⚠️ Skipping product {idx + 1}: No valid price found. Check your price_selector!")
+                    continue
+
+                if not raw_link:
+                    logger.warning(f"    ⚠️ Skipping product {idx + 1}: No link found. Check your link_selector!")
+                    continue
+
+                # Fix relative URLs
                 if not raw_link.startswith('http'):
-                    base_url = site_url.rstrip('/')
+                    base_url = site.url.rstrip('/')
                     if raw_link.startswith('/'):
                         raw_link = raw_link[1:]
                     raw_link = f"{base_url}/{raw_link}"
 
-                # Create snapshot
-                snapshot = PriceSnapshot(
-                    store=site_name,
-                    product=title,
-                    price=price,
-                    recorded_at=datetime.now().isoformat()
-                )
-                db.add(snapshot)
-                db.flush()  # Flush to get ID without committing
+                # Use affiliate link if available
+                display_link = site.affiliate_link if site.affiliate_link else raw_link
 
-                # Query for existing deal
+                # Check if deal already exists
                 existing_deal = db.query(Deal).filter(
-                    Deal.store == site_name,
-                    Deal.product == title
+                    Deal.site_id == site.id,
+                    Deal.title == title
                 ).first()
 
                 if not existing_deal:
+                    # NEW DEAL
                     new_deal = Deal(
-                        store=site_name,
-                        product=title,
-                        price=price,
-                        link=raw_link,
-                        image_url=image_url or None,  # Use None instead of empty string
-                        discovered_at=datetime.now().isoformat(),
-                        is_active=1
+                        site_id=site.id,
+                        title=title,
+                        url=raw_link,
+                        current_price=price_value,
+                        is_expired=False
                     )
                     db.add(new_deal)
-                    new_deals_count += 1
+                    db.commit()
 
-                    message = f"""🔥 <b>NEW DEAL on {site_name}!</b>
+                    # Send Telegram notification
+                    message = f"""🔥 <b>NEW DEAL on {site.name}!</b>
 
 🛍️ {title}
-💰 {price}
-🔗 <a href="{raw_link}">View Deal</a>
+💰 KES {price_value:,.0f}
+🔗 <a href="{display_link}">View Deal</a>
 
 ⏰ {datetime.now().strftime('%H:%M')}"""
-                    send_telegram_message(message)
+
+                    message_id = send_telegram_message(message)
+                    if message_id:
+                        new_deal.telegram_message_id = message_id
+                        db.commit()
+
+                    new_deals_count += 1
 
                 else:
-                    old_price = existing_deal.price
-                    if old_price != price:
-                        old_value = extract_price_value(old_price)
-                        new_value = extract_price_value(price)
+                    # EXISTING DEAL - Check for price changes
+                    old_price = existing_deal.current_price
 
-                        existing_deal.price = price
-                        existing_deal.is_active = 1
-                        if image_url:
-                            existing_deal.image_url = image_url
+                    if old_price != price_value:
+                        existing_deal.current_price = price_value
+                        existing_deal.is_expired = False
+                        existing_deal.updated_at = datetime.utcnow()
+
+                        # Add price snapshot
+                        snapshot = PriceSnapshot(deal_id=existing_deal.id, price=price_value)
+                        db.add(snapshot)
+
                         price_drops_count += 1
 
-                        if new_value < old_value and old_value > 0:
-                            message = f"""💸 <b>PRICE DROP on {site_name}!</b>
+                        if price_value < old_price and old_price > 0:
+                            message = f"""💸 <b>PRICE DROP on {site.name}!</b>
 
 🛍️ {title}
-📉 Was: {old_price}
-✅ Now: {price}
-🔗 <a href="{raw_link}">View Deal</a>
+📉 Was: KES {old_price:,.0f}
+✅ Now: KES {price_value:,.0f}
+🔗 <a href="{display_link}">View Deal</a>
 
 ⏰ {datetime.now().strftime('%H:%M')}"""
                             send_telegram_message(message)
                         else:
-                            print(f"    📈 Price increased: {old_price} → {price}")
+                            logger.info(f"    📈 Price increased: {old_price} → {price_value}")
 
-                # Commit after each product to avoid large transactions
-                db.commit()
+                        db.commit()
 
             except Exception as e:
-                print(f"    ⚠️ Error extracting product: {e}")
+                logger.error(f"    ⚠️ Error extracting product {idx + 1}: {e}")
                 db.rollback()
                 continue
 
     except Exception as e:
-        print(f"    ⚠️ Error scraping {site_name}: {e}")
+        logger.error(f"    ⚠️ Error scraping {site.name}: {e}")
         db.rollback()
-    finally:
-        db.close()
 
     return new_deals_count, price_drops_count
 
 
 def scrape_and_notify():
-    print(f"\n⏰ [{datetime.now().strftime('%H:%M:%S')}] Running scheduled scrape...")
+    """Master job for the scheduler."""
+    logger.info(f"\n⏰ [{datetime.now().strftime('%H:%M:%S')}] Running scheduled scrape...")
 
     db = SessionLocal()
     try:
         sites = db.query(Site).all()
-        site_data = [
-            (site.name, site.url, site.product_selector, site.title_selector, site.price_selector, site.link_selector)
-            for site in sites]
+
+        total_new = 0
+        total_drops = 0
+
+        for site in sites:
+            try:
+                new_count, drop_count = scrape_single_site(site.id, db)
+                total_new += new_count
+                total_drops += drop_count
+            except Exception as e:
+                logger.error(f"    ❌ Critical error on {site.name}: {e}")
+                continue
+
+        logger.info(f"✅ Scrape complete! {total_new} new deals, {total_drops} price changes.\n")
+
     except Exception as e:
-        print(f"❌ Error loading sites: {e}")
-        site_data = []
+        logger.error(f"❌ Error in scrape cycle: {e}")
     finally:
         db.close()
 
-    total_new = 0
-    total_drops = 0
 
-    for site_name, site_url, product_selector, title_selector, price_selector, link_selector in site_data:
-        try:
-            new_count, drop_count = scrape_single_site(
-                site_name, site_url, product_selector, title_selector, price_selector, link_selector
-            )
-            total_new += new_count
-            total_drops += drop_count
-        except Exception as e:
-            print(f"    ❌ Critical error on {site_name}: {e}")
-            continue
-
-    print(f"✅ Scrape complete! {total_new} new deals, {total_drops} price changes.\n")
-
-
-def scrape_in_background():
-    thread = threading.Thread(target=scrape_and_notify, daemon=True)
-    thread.start()
-    return thread
-
-
-def start_scheduler():
+def init_scheduler():
+    """Initialize the APScheduler background job."""
     scheduler = BackgroundScheduler()
-    scheduler.add_job(scrape_and_notify, 'date', run_date=datetime.now())
-    scheduler.add_job(scrape_and_notify, 'interval', minutes=30, id='mali_scraper')
+    scheduler.add_job(
+        func=scrape_and_notify,
+        trigger=IntervalTrigger(minutes=30),
+        id="mali_mali_master_scraper",
+        max_instances=1,
+        misfire_grace_time=60,
+        replace_existing=True
+    )
     scheduler.start()
-    print("🚀 Mali Mali scheduler started! Scraping every 30 minutes.")
+    logger.info("🚀 Mali Mali scheduler started! Scraping every 30 minutes.")
