@@ -55,7 +55,7 @@ def edit_site(site_id: int, name: str = Form(...), url: str = Form(...), product
         site.link_selector = link_selector if link_selector else None;
         site.affiliate_link = affiliate_link if affiliate_link else None
         db.commit()
-        logger.info(f"✏️ Updated site: {name}")
+        logger.info(f"️ Updated site: {name}")
     return RedirectResponse(url="/", status_code=303)
 
 
@@ -99,6 +99,7 @@ def scan_website(url: str = Form(...)):
 
         soup = BeautifulSoup(response.text, 'lxml')
 
+        # 1. Find product containers
         product_suggestions = []
         for tag in soup.find_all(['div', 'li', 'article']):
             classes = tag.get('class', [])
@@ -111,10 +112,25 @@ def scan_website(url: str = Form(...)):
         if not product_suggestions:
             product_suggestions = [".product-item", ".product-card", ".grid-item"]
 
+        # 2. Find link selectors (Look for 'a' tags inside the first product container)
+        link_suggestions = []
+        if product_suggestions:
+            first_container = soup.select_one(product_suggestions[0])
+            if first_container:
+                links = first_container.find_all('a', href=True)
+                if links:
+                    link_suggestions.append("a")
+                    first_link = links[0]
+                    if first_link.get('class'):
+                        link_suggestions.append(f"a.{'.'.join(first_link['class'])}")
+        if not link_suggestions:
+            link_suggestions = ["a", "a.product-link", "a[href]"]
+
         return {
             "product_selector": product_suggestions,
             "title_selector": ["h2.title", "h3.title", ".product-title", ".name", "h2", "h3"],
-            "price_selector": [".price", ".product-price", "span.price", ".amount"]
+            "price_selector": [".price", ".product-price", "span.price", ".amount"],
+            "link_selector": link_suggestions
         }
     except Exception as e:
         return {"error": str(e)}
@@ -175,6 +191,8 @@ def admin_dashboard(request: Request, db: Session = Depends(get_db)):
         "      if (data.title_selector && data.title_selector.length > 0) document.getElementById('title_selector').value = data.title_selector[0];")
     html.append(
         "      if (data.price_selector && data.price_selector.length > 0) document.getElementById('price_selector').value = data.price_selector[0];")
+    html.append(
+        "      if (data.link_selector && data.link_selector.length > 0) document.getElementById('link_selector').value = data.link_selector[0];")
     html.append("      alert('Selectors auto-filled! Review and adjust if needed.');")
     html.append("    })")
     html.append("    .catch(error => alert('Scan failed. Check console.'))")
@@ -185,7 +203,7 @@ def admin_dashboard(request: Request, db: Session = Depends(get_db)):
     html.append("</head>")
     html.append("<body>")
     html.append("<div class='container'>")
-    html.append("<h1>🏆 MALI MALI COMMAND CENTER</h1>")
+    html.append("<h1> MALI MALI COMMAND CENTER</h1>")
 
     html.append("<div class='card'>")
     html.append("<h2>➕ Add New Website</h2>")
@@ -204,7 +222,7 @@ def admin_dashboard(request: Request, db: Session = Depends(get_db)):
     html.append(
         "<div><label style='color:#FFF;'>Price Selector:</label><input type='text' id='price_selector' name='price_selector' required placeholder='Auto-filled by scanner'></div>")
     html.append(
-        "<div><label style='color:#FFF;'>Link Selector (optional):</label><input type='text' name='link_selector' placeholder='e.g., a.product-link'></div>")
+        "<div><label style='color:#FFF;'>Link Selector (optional):</label><input type='text' id='link_selector' name='link_selector' placeholder='Auto-filled by scanner'></div>")
     html.append(
         "<div><label style='color:#FFF;'>Affiliate Link (optional):</label><input type='text' name='affiliate_link' placeholder='e.g., https://your-affiliate-link.com'></div>")
     html.append("</div>")
