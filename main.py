@@ -6,7 +6,7 @@ import uvicorn
 import logging
 import requests
 import re
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString
 from collections import Counter
 
 from database import get_db, Deal, Site, engine, Base
@@ -15,6 +15,7 @@ from scheduler import init_scheduler, scrape_single_site
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# Pre-loaded verified selectors for major Kenyan sites
 KNOWN_SITES = {
     "kilimall.co.ke": {
         "product_selector": ".product-item",
@@ -24,9 +25,16 @@ KNOWN_SITES = {
         "image_selector": "img"
     },
     "jumia.co.ke": {
-        "product_selector": ".prdct",
-        "title_selector": "h3.title",
+        "product_selector": ".prd",
+        "title_selector": ".title",
         "price_selector": ".prc",
+        "link_selector": "a",
+        "image_selector": "img"
+    },
+    "jiji.co.ke": {
+        "product_selector": ".listing-card",
+        "title_selector": ".listing-title",
+        "price_selector": ".listing-price",
         "link_selector": "a",
         "image_selector": "img"
     }
@@ -76,7 +84,7 @@ def edit_site(site_id: int, name: str = Form(...), url: str = Form(...), product
         site.image_selector = image_selector if image_selector else None;
         site.affiliate_link = affiliate_link if affiliate_link else None
         db.commit()
-        logger.info(f"✏️ Updated site: {name}")
+        logger.info(f"️ Updated site: {name}")
     return RedirectResponse(url="/", status_code=303)
 
 
@@ -122,7 +130,7 @@ def scan_website(url: str = Form(...)):
             if domain in url:
                 return selectors
 
-        # 2. Smart DOM Analyzer
+        # 2. Structural Analyzer
         headers = {
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept-Language": "en-US,en;q=0.5"}
@@ -137,7 +145,7 @@ def scan_website(url: str = Form(...)):
         for tag in soup.find_all(['div', 'li', 'article']):
             classes = tag.get('class', [])
             class_str = ' '.join(classes)
-            if any(kw in class_str.lower() for kw in ['product', 'item', 'card', 'grid']):
+            if any(kw in class_str.lower() for kw in ['product', 'item', 'card', 'grid', 'listing']):
                 selector = f"{tag.name}.{class_str.replace(' ', '.')}"
                 if len(soup.select(selector)) > 3:
                     product_suggestions.append(selector)
@@ -145,52 +153,69 @@ def scan_website(url: str = Form(...)):
         if not product_suggestions:
             return {"error": "Could not find product containers. Try a different URL."}
 
-        containers = soup.select(product_suggestions[0])[:5]  # Analyze first 5
+        containers = soup.select(product_suggestions[0])[:5]
 
-        # Smart Title Finder
+        # Smart Price Finder (Looks for currency symbols)
+        price_candidates = []
+        currency_pattern = re.compile(r'(KES|KSh|\$|£|€|USD)\s*[\d,]+\.?\d*', re.IGNORECASE)
+        for container in containers:
+            for tag in container.find_all(['span', 'div', 'p', 'strong', 'b']):
+                text = tag.get_text(strip=True)
+                if currency_pattern.search(text):
+                    classes = tag.get('class', [])
+                    if classes:
+                        price_candidates.append(f"{tag.name}.{'.'.join(classes)}")
+                    else:
+                        # If no class, look at parent
+                        if tag.parent and tag.parent.get('class'):
+                            price_candidates.append(f"{tag.parent.name}.{'.'.join(tag.parent.get('class'))}")
+
+        # Smart Title Finder (Looks for the longest text block)
         title_candidates = []
         for container in containers:
-            for tag in container.find_all(['h1', 'h2', 'h3', 'h4', 'a', 'div']):
-                classes = tag.get('class', [])
-                class_str = ' '.join(classes)
+            texts = []
+            for tag in container.find_all(['h1', 'h2', 'h3', 'h4', 'a', 'div', 'p']):
                 text = tag.get_text(strip=True)
-                if any(kw in class_str.lower() for kw in ['title', 'name', 'heading']) or (
-                        tag.name in ['h1', 'h2', 'h3'] and 5 < len(text) < 100):
-                    if class_str:
-                        title_candidates.append(f"{tag.name}.{class_str.replace(' ', '.')}")
-                    else:
-                        title_candidates.append(tag.name)
+                if 10 < len(text) < 150:  # Reasonable title length
+                    texts.append((len(text), tag))
+            if texts:
+                longest_text_tag = max(texts, key=lambda x: x[0])[1]
+                classes = longest_text_tag.get('class', [])
+                if classes:
+                    title_candidates.append(f"{longest_text_tag.name}.{'.'.join(classes)}")
+                elif longest_text_tag.parent and longest_text_tag.parent.get('class'):
+                    title_candidates.append(
+                        f"{longest_text_tag.parent.name}.{'.'.join(longest_text_tag.parent.get('class'))}")
 
-        # Smart Price Finder
-        price_candidates = []
-        for container in containers:
-            for tag in container.find_all(['span', 'div', 'p', 'strong']):
-                classes = tag.get('class', [])
-                class_str = ' '.join(classes)
-                text = tag.get_text(strip=True)
-                if re.search(r'\d', text) and any(
-                        kw in class_str.lower() for kw in ['price', 'cost', 'amount', 'currency', 'sale']):
-                    if class_str: price_candidates.append(f"{tag.name}.{class_str.replace(' ', '.')}")
-
-        # Smart Image Finder
+        # Smart Image Finder (Looks for largest image or specific attributes)
         img_candidates = []
         for container in containers:
-            for img in container.find_all('img'):
-                classes = img.get('class', [])
-                class_str = ' '.join(classes)
-                if class_str: img_candidates.append(f"img.{class_str.replace(' ', '.')}")
+            imgs = container.find_all('img')
+            if imgs:
+                # Prefer images with 'src' over 'data-src' if possible, or largest
+                best_img = max(imgs, key=lambda x: x.get('width', 0) or 0)
+                classes = best_img.get('class', [])
+                if classes:
+                    img_candidates.append(f"img.{'.'.join(classes)}")
+                else:
+                    img_candidates.append("img")
 
         # Smart Link Finder
         link_candidates = []
         for container in containers:
-            for a in container.find_all('a', href=True):
-                classes = a.get('class', [])
-                class_str = ' '.join(classes)
-                if class_str: link_candidates.append(f"a.{class_str.replace(' ', '.')}")
+            links = container.find_all('a', href=True)
+            if links:
+                # Usually the first link or the one wrapping the title
+                best_link = links[0]
+                classes = best_link.get('class', [])
+                if classes:
+                    link_candidates.append(f"a.{'.'.join(classes)}")
+                else:
+                    link_candidates.append("a")
 
         return {
             "product_selector": product_suggestions,
-            "title_selector": [get_best_selector(title_candidates, "h3.title")],
+            "title_selector": [get_best_selector(title_candidates, "h3")],
             "price_selector": [get_best_selector(price_candidates, ".price")],
             "link_selector": [get_best_selector(link_candidates, "a")],
             "image_selector": [get_best_selector(img_candidates, "img")]
@@ -338,7 +363,7 @@ def admin_dashboard(request: Request, db: Session = Depends(get_db)):
     html.append("</div>")
 
     html.append("<div class='card'>")
-    html.append("<h2>🔥 Active Deals</h2>")
+    html.append("<h2> Active Deals</h2>")
     html.append("<table><tr><th>Title</th><th>Price (KES)</th><th>Category</th><th>Actions</th></tr>")
 
     for deal in deals:
