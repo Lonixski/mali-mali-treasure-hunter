@@ -6,7 +6,7 @@ import uvicorn
 import logging
 import requests
 import re
-from bs4 import BeautifulSoup, NavigableString
+from bs4 import BeautifulSoup
 from collections import Counter
 
 from database import get_db, Deal, Site, engine, Base
@@ -15,7 +15,6 @@ from scheduler import init_scheduler, scrape_single_site
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Pre-loaded verified selectors for major Kenyan sites
 KNOWN_SITES = {
     "kilimall.co.ke": {
         "product_selector": ".product-item",
@@ -84,7 +83,7 @@ def edit_site(site_id: int, name: str = Form(...), url: str = Form(...), product
         site.image_selector = image_selector if image_selector else None;
         site.affiliate_link = affiliate_link if affiliate_link else None
         db.commit()
-        logger.info(f"️ Updated site: {name}")
+        logger.info(f"✏️ Updated site: {name}")
     return RedirectResponse(url="/", status_code=303)
 
 
@@ -92,7 +91,7 @@ def edit_site(site_id: int, name: str = Form(...), url: str = Form(...), product
 def delete_site(site_id: int, db: Session = Depends(get_db)):
     site = db.query(Site).filter(Site.id == site_id).first()
     if site:
-        logger.info(f"🗑️ DELETING SITE: {site.name} (ID: {site_id})")
+        logger.info(f"️ DELETING SITE: {site.name} (ID: {site_id})")
         db.delete(site);
         db.commit()
     return RedirectResponse(url="/", status_code=303)
@@ -101,7 +100,7 @@ def delete_site(site_id: int, db: Session = Depends(get_db)):
 @app.post("/refresh_site/{site_id}")
 def refresh_site(site_id: int, db: Session = Depends(get_db)):
     site = db.query(Site).filter(Site.id == site_id).first()
-    logger.info(f"🔄 MANUAL SCRAPE TRIGGERED for: {site.name if site else 'Unknown'}")
+    logger.info(f" MANUAL SCRAPE TRIGGERED for: {site.name if site else 'Unknown'}")
     scrape_single_site(site_id, db)
     return RedirectResponse(url="/", status_code=303)
 
@@ -116,10 +115,39 @@ def delete_deal(deal_id: int, db: Session = Depends(get_db)):
     return RedirectResponse(url="/", status_code=303)
 
 
-def get_best_selector(candidates, fallback):
-    if not candidates: return fallback
-    counter = Counter(candidates)
-    return counter.most_common(1)[0][0]
+def generate_smart_selector(tag, fallback):
+    """Generates a specific CSS selector by looking at the tag, its attributes, and its parents."""
+    if not tag: return fallback
+
+    # 1. Check tag's own classes
+    classes = tag.get('class', [])
+    if classes:
+        return f"{tag.name}.{'.'.join(classes)}"
+
+    # 2. Check tag's own ID
+    tag_id = tag.get('id')
+    if tag_id:
+        return f"{tag.name}#{tag_id}"
+
+    # 3. Check specific attributes (Great for images and links)
+    if tag.name == 'img':
+        if 'data-src' in tag.attrs: return "img[data-src]"
+        if 'src' in tag.attrs: return "img[src]"
+
+    if tag.name == 'a':
+        href = tag.get('href', '')
+        if href and not href.startswith('#') and not href.startswith('javascript'):
+            return "a[href]"
+
+    # 4. Context-Aware: Look at the parent's classes (The "Wrapper" method)
+    parent = tag.parent
+    while parent and parent.name not in ['body', 'html', 'main']:
+        p_classes = parent.get('class', [])
+        if p_classes:
+            return f"{parent.name}.{'.'.join(p_classes)} > {tag.name}"
+        parent = parent.parent
+
+    return fallback
 
 
 @app.post("/scan_website")
@@ -130,7 +158,7 @@ def scan_website(url: str = Form(...)):
             if domain in url:
                 return selectors
 
-        # 2. Structural Analyzer
+        # 2. Context-Aware Analyzer
         headers = {
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept-Language": "en-US,en;q=0.5"}
@@ -162,13 +190,7 @@ def scan_website(url: str = Form(...)):
             for tag in container.find_all(['span', 'div', 'p', 'strong', 'b']):
                 text = tag.get_text(strip=True)
                 if currency_pattern.search(text):
-                    classes = tag.get('class', [])
-                    if classes:
-                        price_candidates.append(f"{tag.name}.{'.'.join(classes)}")
-                    else:
-                        # If no class, look at parent
-                        if tag.parent and tag.parent.get('class'):
-                            price_candidates.append(f"{tag.parent.name}.{'.'.join(tag.parent.get('class'))}")
+                    price_candidates.append(generate_smart_selector(tag, ".price"))
 
         # Smart Title Finder (Looks for the longest text block)
         title_candidates = []
@@ -176,49 +198,34 @@ def scan_website(url: str = Form(...)):
             texts = []
             for tag in container.find_all(['h1', 'h2', 'h3', 'h4', 'a', 'div', 'p']):
                 text = tag.get_text(strip=True)
-                if 10 < len(text) < 150:  # Reasonable title length
+                if 10 < len(text) < 150:
                     texts.append((len(text), tag))
             if texts:
                 longest_text_tag = max(texts, key=lambda x: x[0])[1]
-                classes = longest_text_tag.get('class', [])
-                if classes:
-                    title_candidates.append(f"{longest_text_tag.name}.{'.'.join(classes)}")
-                elif longest_text_tag.parent and longest_text_tag.parent.get('class'):
-                    title_candidates.append(
-                        f"{longest_text_tag.parent.name}.{'.'.join(longest_text_tag.parent.get('class'))}")
+                title_candidates.append(generate_smart_selector(longest_text_tag, "h3"))
 
-        # Smart Image Finder (Looks for largest image or specific attributes)
+        # Smart Image Finder
         img_candidates = []
         for container in containers:
             imgs = container.find_all('img')
             if imgs:
-                # Prefer images with 'src' over 'data-src' if possible, or largest
                 best_img = max(imgs, key=lambda x: x.get('width', 0) or 0)
-                classes = best_img.get('class', [])
-                if classes:
-                    img_candidates.append(f"img.{'.'.join(classes)}")
-                else:
-                    img_candidates.append("img")
+                img_candidates.append(generate_smart_selector(best_img, "img"))
 
         # Smart Link Finder
         link_candidates = []
         for container in containers:
             links = container.find_all('a', href=True)
             if links:
-                # Usually the first link or the one wrapping the title
                 best_link = links[0]
-                classes = best_link.get('class', [])
-                if classes:
-                    link_candidates.append(f"a.{'.'.join(classes)}")
-                else:
-                    link_candidates.append("a")
+                link_candidates.append(generate_smart_selector(best_link, "a"))
 
         return {
             "product_selector": product_suggestions,
-            "title_selector": [get_best_selector(title_candidates, "h3")],
-            "price_selector": [get_best_selector(price_candidates, ".price")],
-            "link_selector": [get_best_selector(link_candidates, "a")],
-            "image_selector": [get_best_selector(img_candidates, "img")]
+            "title_selector": [title_candidates[0]] if title_candidates else ["h3"],
+            "price_selector": [price_candidates[0]] if price_candidates else [".price"],
+            "link_selector": [link_candidates[0]] if link_candidates else ["a[href]"],
+            "image_selector": [img_candidates[0]] if img_candidates else ["img[src]"]
         }
     except Exception as e:
         return {"error": str(e)}
@@ -363,7 +370,7 @@ def admin_dashboard(request: Request, db: Session = Depends(get_db)):
     html.append("</div>")
 
     html.append("<div class='card'>")
-    html.append("<h2> Active Deals</h2>")
+    html.append("<h2>🔥 Active Deals</h2>")
     html.append("<table><tr><th>Title</th><th>Price (KES)</th><th>Category</th><th>Actions</th></tr>")
 
     for deal in deals:
