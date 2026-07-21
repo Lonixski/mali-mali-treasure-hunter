@@ -5,7 +5,9 @@ from contextlib import asynccontextmanager
 import uvicorn
 import logging
 import requests
+import re
 from bs4 import BeautifulSoup
+from collections import Counter
 
 from database import get_db, Deal, Site, engine, Base
 from scheduler import init_scheduler, scrape_single_site
@@ -106,6 +108,12 @@ def delete_deal(deal_id: int, db: Session = Depends(get_db)):
     return RedirectResponse(url="/", status_code=303)
 
 
+def get_best_selector(candidates, fallback):
+    if not candidates: return fallback
+    counter = Counter(candidates)
+    return counter.most_common(1)[0][0]
+
+
 @app.post("/scan_website")
 def scan_website(url: str = Form(...)):
     try:
@@ -114,7 +122,7 @@ def scan_website(url: str = Form(...)):
             if domain in url:
                 return selectors
 
-        # 2. Fallback to Heuristic Scanner
+        # 2. Smart DOM Analyzer
         headers = {
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept-Language": "en-US,en;q=0.5"}
@@ -124,6 +132,7 @@ def scan_website(url: str = Form(...)):
 
         soup = BeautifulSoup(response.text, 'lxml')
 
+        # Find product containers
         product_suggestions = []
         for tag in soup.find_all(['div', 'li', 'article']):
             classes = tag.get('class', [])
@@ -134,29 +143,57 @@ def scan_website(url: str = Form(...)):
                     product_suggestions.append(selector)
         product_suggestions = list(dict.fromkeys(product_suggestions))[:3]
         if not product_suggestions:
-            product_suggestions = [".product-item", ".product-card", ".grid-item"]
+            return {"error": "Could not find product containers. Try a different URL."}
 
-        link_suggestions = []
-        image_suggestions = []
-        if product_suggestions:
-            first_container = soup.select_one(product_suggestions[0])
-            if first_container:
-                links = first_container.find_all('a', href=True)
-                if links:
-                    link_suggestions.append("a")
-                images = first_container.find_all('img', src=True)
-                if images:
-                    image_suggestions.append("img")
+        containers = soup.select(product_suggestions[0])[:5]  # Analyze first 5
 
-        if not link_suggestions: link_suggestions = ["a", "a.product-link"]
-        if not image_suggestions: image_suggestions = ["img", "img.product-image"]
+        # Smart Title Finder
+        title_candidates = []
+        for container in containers:
+            for tag in container.find_all(['h1', 'h2', 'h3', 'h4', 'a', 'div']):
+                classes = tag.get('class', [])
+                class_str = ' '.join(classes)
+                text = tag.get_text(strip=True)
+                if any(kw in class_str.lower() for kw in ['title', 'name', 'heading']) or (
+                        tag.name in ['h1', 'h2', 'h3'] and 5 < len(text) < 100):
+                    if class_str:
+                        title_candidates.append(f"{tag.name}.{class_str.replace(' ', '.')}")
+                    else:
+                        title_candidates.append(tag.name)
+
+        # Smart Price Finder
+        price_candidates = []
+        for container in containers:
+            for tag in container.find_all(['span', 'div', 'p', 'strong']):
+                classes = tag.get('class', [])
+                class_str = ' '.join(classes)
+                text = tag.get_text(strip=True)
+                if re.search(r'\d', text) and any(
+                        kw in class_str.lower() for kw in ['price', 'cost', 'amount', 'currency', 'sale']):
+                    if class_str: price_candidates.append(f"{tag.name}.{class_str.replace(' ', '.')}")
+
+        # Smart Image Finder
+        img_candidates = []
+        for container in containers:
+            for img in container.find_all('img'):
+                classes = img.get('class', [])
+                class_str = ' '.join(classes)
+                if class_str: img_candidates.append(f"img.{class_str.replace(' ', '.')}")
+
+        # Smart Link Finder
+        link_candidates = []
+        for container in containers:
+            for a in container.find_all('a', href=True):
+                classes = a.get('class', [])
+                class_str = ' '.join(classes)
+                if class_str: link_candidates.append(f"a.{class_str.replace(' ', '.')}")
 
         return {
             "product_selector": product_suggestions,
-            "title_selector": ["h2.title", "h3.title", ".product-title", ".name", "h2", "h3"],
-            "price_selector": [".price", ".product-price", "span.price", ".amount"],
-            "link_selector": link_suggestions,
-            "image_selector": image_suggestions
+            "title_selector": [get_best_selector(title_candidates, "h3.title")],
+            "price_selector": [get_best_selector(price_candidates, ".price")],
+            "link_selector": [get_best_selector(link_candidates, "a")],
+            "image_selector": [get_best_selector(img_candidates, "img")]
         }
     except Exception as e:
         return {"error": str(e)}
@@ -231,7 +268,7 @@ def admin_dashboard(request: Request, db: Session = Depends(get_db)):
     html.append("</head>")
     html.append("<body>")
     html.append("<div class='container'>")
-    html.append("<h1> MALI MALI COMMAND CENTER</h1>")
+    html.append("<h1>🏆 MALI MALI COMMAND CENTER</h1>")
 
     html.append("<div class='card'>")
     html.append("<h2>➕ Add New Website</h2>")
@@ -261,7 +298,7 @@ def admin_dashboard(request: Request, db: Session = Depends(get_db)):
     html.append("</div>")
 
     html.append("<div class='card'>")
-    html.append("<h2>️ Managed Websites</h2>")
+    html.append("<h2>🛠️ Managed Websites</h2>")
     html.append("<table><tr><th>Name</th><th>URL</th><th>Selectors</th><th>Affiliate</th><th>Actions</th></tr>")
 
     for site in sites:
