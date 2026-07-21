@@ -18,14 +18,19 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 
-def send_telegram_message(message):
+def send_telegram_message(message, image_url=None):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         logger.warning("️ Telegram not configured.")
         return None
     try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        data = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}
-        response = requests.post(url, data=data, timeout=10)
+        if image_url:
+            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+            data = {"chat_id": TELEGRAM_CHAT_ID, "photo": image_url, "caption": message, "parse_mode": "HTML"}
+        else:
+            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+            data = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}
+
+        response = requests.post(url, data=data, timeout=15)
         if response.status_code == 200:
             message_id = response.json()['result']['message_id']
             logger.info("📱 Telegram notification sent!")
@@ -49,7 +54,7 @@ def scrape_single_site(site_id: int, db):
     site = db.query(Site).filter(Site.id == site_id).first()
     if not site: return 0, 0
     if not site.product_selector or not site.title_selector or not site.price_selector:
-        logger.warning(f"⚠️ {site.name} is missing CSS selectors. Skipping.")
+        logger.warning(f"️ {site.name} is missing CSS selectors. Skipping.")
         return 0, 0
 
     logger.info(f"  🔍 Visiting: {site.name}...")
@@ -80,11 +85,27 @@ def scrape_single_site(site_id: int, db):
             try:
                 title_element = product.select_one(site.title_selector)
                 title = title_element.text.strip() if title_element else None
+
                 price_element = product.select_one(site.price_selector)
                 price_str = price_element.text.strip() if price_element else None
                 price_value = extract_price_value(price_str) if price_str else 0.0
+
                 link_element = product.select_one(site.link_selector) if site.link_selector else None
                 raw_link = link_element['href'] if link_element else None
+
+                # Image extraction
+                image_element = product.select_one(site.image_selector) if site.image_selector else None
+                image_url = None
+                if image_element:
+                    image_url = image_element.get('src') or image_element.get('data-src')
+                    if image_url and not image_url.startswith('http'):
+                        base_url = site.url.rstrip('/')
+                        if image_url.startswith('//'):
+                            image_url = 'https:' + image_url
+                        elif image_url.startswith('/'):
+                            image_url = f"{base_url}{image_url}"
+                        else:
+                            image_url = f"{base_url}/{image_url}"
 
                 if not title or title == "No Title": continue
                 if price_value == 0.0: continue
@@ -99,12 +120,12 @@ def scrape_single_site(site_id: int, db):
                 existing_deal = db.query(Deal).filter(Deal.site_id == site.id, Deal.title == title).first()
 
                 if not existing_deal:
-                    new_deal = Deal(site_id=site.id, title=title, url=raw_link, current_price=price_value,
-                                    is_expired=False)
+                    new_deal = Deal(site_id=site.id, title=title, url=raw_link, image_url=image_url,
+                                    current_price=price_value, is_expired=False)
                     db.add(new_deal)
                     db.commit()
                     message = f"""🔥 <b>NEW DEAL on {site.name}!</b>\n\n🛍️ {title}\n💰 KES {price_value:,.0f}\n🔗 <a href="{display_link}">View Deal</a>\n\n⏰ {datetime.now().strftime('%H:%M')}"""
-                    message_id = send_telegram_message(message)
+                    message_id = send_telegram_message(message, image_url=image_url)
                     if message_id:
                         new_deal.telegram_message_id = message_id
                         db.commit()
@@ -115,12 +136,13 @@ def scrape_single_site(site_id: int, db):
                         existing_deal.current_price = price_value
                         existing_deal.is_expired = False
                         existing_deal.updated_at = datetime.utcnow()
+                        if image_url: existing_deal.image_url = image_url
                         snapshot = PriceSnapshot(deal_id=existing_deal.id, price=price_value)
                         db.add(snapshot)
                         price_drops_count += 1
                         if price_value < old_price and old_price > 0:
-                            message = f"""💸 <b>PRICE DROP on {site.name}!</b>\n\n🛍️ {title}\n Was: KES {old_price:,.0f}\n✅ Now: KES {price_value:,.0f}\n🔗 <a href="{display_link}">View Deal</a>\n\n {datetime.now().strftime('%H:%M')}"""
-                            send_telegram_message(message)
+                            message = f"""💸 <b>PRICE DROP on {site.name}!</b>\n\n🛍️ {title}\n📉 Was: KES {old_price:,.0f}\n✅ Now: KES {price_value:,.0f}\n <a href="{display_link}">View Deal</a>\n\n⏰ {datetime.now().strftime('%H:%M')}"""
+                            send_telegram_message(message, image_url=existing_deal.image_url or image_url)
                         db.commit()
             except Exception as e:
                 logger.error(f"    ⚠️ Error extracting product {idx + 1}: {e}")

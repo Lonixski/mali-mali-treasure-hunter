@@ -44,6 +44,7 @@ class Site(Base):
     title_selector = Column(String, nullable=True)
     price_selector = Column(String, nullable=True)
     link_selector = Column(String, nullable=True)
+    image_selector = Column(String, nullable=True)
     affiliate_link = Column(String, nullable=True)
     deals = relationship("Deal", back_populates="site", cascade="all, delete-orphan")
 

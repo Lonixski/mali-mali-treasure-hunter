@@ -13,6 +13,23 @@ from scheduler import init_scheduler, scrape_single_site
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+KNOWN_SITES = {
+    "kilimall.co.ke": {
+        "product_selector": ".product-item",
+        "title_selector": ".product-title",
+        "price_selector": ".product-price",
+        "link_selector": "a",
+        "image_selector": "img"
+    },
+    "jumia.co.ke": {
+        "product_selector": ".prdct",
+        "title_selector": "h3.title",
+        "price_selector": ".prc",
+        "link_selector": "a",
+        "image_selector": "img"
+    }
+}
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -31,9 +48,10 @@ def startup_db():
 @app.post("/add_site")
 def add_site(name: str = Form(...), url: str = Form(...), product_selector: str = Form(...),
              title_selector: str = Form(...), price_selector: str = Form(...), link_selector: str = Form(""),
-             affiliate_link: str = Form(""), db: Session = Depends(get_db)):
+             image_selector: str = Form(""), affiliate_link: str = Form(""), db: Session = Depends(get_db)):
     new_site = Site(name=name, url=url, product_selector=product_selector, title_selector=title_selector,
                     price_selector=price_selector, link_selector=link_selector if link_selector else None,
+                    image_selector=image_selector if image_selector else None,
                     affiliate_link=affiliate_link if affiliate_link else None)
     db.add(new_site)
     db.commit()
@@ -44,7 +62,7 @@ def add_site(name: str = Form(...), url: str = Form(...), product_selector: str 
 @app.post("/edit_site/{site_id}")
 def edit_site(site_id: int, name: str = Form(...), url: str = Form(...), product_selector: str = Form(...),
               title_selector: str = Form(...), price_selector: str = Form(...), link_selector: str = Form(""),
-              affiliate_link: str = Form(""), db: Session = Depends(get_db)):
+              image_selector: str = Form(""), affiliate_link: str = Form(""), db: Session = Depends(get_db)):
     site = db.query(Site).filter(Site.id == site_id).first()
     if site:
         site.name = name;
@@ -53,9 +71,10 @@ def edit_site(site_id: int, name: str = Form(...), url: str = Form(...), product
         site.title_selector = title_selector;
         site.price_selector = price_selector;
         site.link_selector = link_selector if link_selector else None;
+        site.image_selector = image_selector if image_selector else None;
         site.affiliate_link = affiliate_link if affiliate_link else None
         db.commit()
-        logger.info(f"️ Updated site: {name}")
+        logger.info(f"✏️ Updated site: {name}")
     return RedirectResponse(url="/", status_code=303)
 
 
@@ -90,6 +109,12 @@ def delete_deal(deal_id: int, db: Session = Depends(get_db)):
 @app.post("/scan_website")
 def scan_website(url: str = Form(...)):
     try:
+        # 1. Check Known Sites first
+        for domain, selectors in KNOWN_SITES.items():
+            if domain in url:
+                return selectors
+
+        # 2. Fallback to Heuristic Scanner
         headers = {
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept-Language": "en-US,en;q=0.5"}
@@ -99,7 +124,6 @@ def scan_website(url: str = Form(...)):
 
         soup = BeautifulSoup(response.text, 'lxml')
 
-        # 1. Find product containers
         product_suggestions = []
         for tag in soup.find_all(['div', 'li', 'article']):
             classes = tag.get('class', [])
@@ -112,25 +136,27 @@ def scan_website(url: str = Form(...)):
         if not product_suggestions:
             product_suggestions = [".product-item", ".product-card", ".grid-item"]
 
-        # 2. Find link selectors (Look for 'a' tags inside the first product container)
         link_suggestions = []
+        image_suggestions = []
         if product_suggestions:
             first_container = soup.select_one(product_suggestions[0])
             if first_container:
                 links = first_container.find_all('a', href=True)
                 if links:
                     link_suggestions.append("a")
-                    first_link = links[0]
-                    if first_link.get('class'):
-                        link_suggestions.append(f"a.{'.'.join(first_link['class'])}")
-        if not link_suggestions:
-            link_suggestions = ["a", "a.product-link", "a[href]"]
+                images = first_container.find_all('img', src=True)
+                if images:
+                    image_suggestions.append("img")
+
+        if not link_suggestions: link_suggestions = ["a", "a.product-link"]
+        if not image_suggestions: image_suggestions = ["img", "img.product-image"]
 
         return {
             "product_selector": product_suggestions,
             "title_selector": ["h2.title", "h3.title", ".product-title", ".name", "h2", "h3"],
             "price_selector": [".price", ".product-price", "span.price", ".amount"],
-            "link_selector": link_suggestions
+            "link_selector": link_suggestions,
+            "image_selector": image_suggestions
         }
     except Exception as e:
         return {"error": str(e)}
@@ -193,6 +219,8 @@ def admin_dashboard(request: Request, db: Session = Depends(get_db)):
         "      if (data.price_selector && data.price_selector.length > 0) document.getElementById('price_selector').value = data.price_selector[0];")
     html.append(
         "      if (data.link_selector && data.link_selector.length > 0) document.getElementById('link_selector').value = data.link_selector[0];")
+    html.append(
+        "      if (data.image_selector && data.image_selector.length > 0) document.getElementById('image_selector').value = data.image_selector[0];")
     html.append("      alert('Selectors auto-filled! Review and adjust if needed.');")
     html.append("    })")
     html.append("    .catch(error => alert('Scan failed. Check console.'))")
@@ -224,6 +252,8 @@ def admin_dashboard(request: Request, db: Session = Depends(get_db)):
     html.append(
         "<div><label style='color:#FFF;'>Link Selector (optional):</label><input type='text' id='link_selector' name='link_selector' placeholder='Auto-filled by scanner'></div>")
     html.append(
+        "<div><label style='color:#FFF;'>Image Selector (optional):</label><input type='text' id='image_selector' name='image_selector' placeholder='Auto-filled by scanner'></div>")
+    html.append(
         "<div><label style='color:#FFF;'>Affiliate Link (optional):</label><input type='text' name='affiliate_link' placeholder='e.g., https://your-affiliate-link.com'></div>")
     html.append("</div>")
     html.append("<button type='submit' style='margin-top: 10px;'>Add Site</button>")
@@ -231,11 +261,11 @@ def admin_dashboard(request: Request, db: Session = Depends(get_db)):
     html.append("</div>")
 
     html.append("<div class='card'>")
-    html.append("<h2>🛠️ Managed Websites</h2>")
+    html.append("<h2>️ Managed Websites</h2>")
     html.append("<table><tr><th>Name</th><th>URL</th><th>Selectors</th><th>Affiliate</th><th>Actions</th></tr>")
 
     for site in sites:
-        sel_info = f"Product: {site.product_selector or 'N/A'}<br>Title: {site.title_selector or 'N/A'}<br>Price: {site.price_selector or 'N/A'}"
+        sel_info = f"Product: {site.product_selector or 'N/A'}<br>Title: {site.title_selector or 'N/A'}<br>Price: {site.price_selector or 'N/A'}<br>Image: {site.image_selector or 'N/A'}"
         aff_info = site.affiliate_link if site.affiliate_link else "None"
         url_short = site.url[:40] + "..." if len(site.url) > 40 else site.url
 
@@ -257,6 +287,7 @@ def admin_dashboard(request: Request, db: Session = Depends(get_db)):
         html.append(f"<input type='text' name='title_selector' value='{site.title_selector or ''}' required>")
         html.append(f"<input type='text' name='price_selector' value='{site.price_selector or ''}' required>")
         html.append(f"<input type='text' name='link_selector' value='{site.link_selector or ''}'>")
+        html.append(f"<input type='text' name='image_selector' value='{site.image_selector or ''}'>")
         html.append(f"<input type='text' name='affiliate_link' value='{site.affiliate_link or ''}'>")
         html.append("<button type='submit'>Save Changes</button>")
         html.append("</form>")
