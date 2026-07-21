@@ -13,13 +13,9 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 if not DATABASE_URL:
     raise ValueError("FATAL: DATABASE_URL environment variable is not set.")
 
-# 1. Strip out ANY existing driver (like +psycopg2) to prevent conflicts
 DATABASE_URL = re.sub(r'^postgresql\+[^:]+://', 'postgresql://', DATABASE_URL)
-
-# 2. Forcefully use the modern 'psycopg' (v3) driver
 DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
 
-# 3. Ensure SSL is enabled for Neon
 if "sslmode=" not in DATABASE_URL:
     if "?" in DATABASE_URL:
         DATABASE_URL += "&sslmode=require"
@@ -39,24 +35,17 @@ engine = create_engine(
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-
 class Site(Base):
     __tablename__ = "sites"
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True, nullable=False)
     url = Column(String, nullable=False)
-
-    # CSS Selectors for scraping
     product_selector = Column(String, nullable=True)
     title_selector = Column(String, nullable=True)
     price_selector = Column(String, nullable=True)
     link_selector = Column(String, nullable=True)
-
-    # Affiliate link (optional)
     affiliate_link = Column(String, nullable=True)
-
     deals = relationship("Deal", back_populates="site", cascade="all, delete-orphan")
-
 
 class Deal(Base):
     __tablename__ = "deals"
@@ -67,17 +56,13 @@ class Deal(Base):
     image_url = Column(String, nullable=True)
     original_price = Column(Float, nullable=True)
     current_price = Column(Float, nullable=False)
-
     category = Column(String, nullable=True)
     is_expired = Column(Boolean, default=False)
     telegram_message_id = Column(BigInteger, nullable=True)
-
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
     site = relationship("Site", back_populates="deals")
     snapshots = relationship("PriceSnapshot", back_populates="deal", cascade="all, delete-orphan")
-
 
 class PriceSnapshot(Base):
     __tablename__ = "price_snapshots"
@@ -87,9 +72,7 @@ class PriceSnapshot(Base):
     checked_at = Column(DateTime, default=datetime.utcnow)
     deal = relationship("Deal", back_populates="snapshots")
 
-
 Base.metadata.create_all(bind=engine)
-
 
 def get_db():
     db = SessionLocal()
